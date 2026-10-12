@@ -616,11 +616,9 @@ async def test_runner_propagates_explicit_skill_errors_only_to_tool_spans(
         record.getMessage()
         for record in caplog.records
         if record.name == "lightspeed_agentic"
-        and record.getMessage().startswith("[provider:run] tool_result: ")
-    ] == [
-        f"[provider:run] tool_result: {json.dumps(response)}"
-        for response in expected_results.values()
-    ]
+        and record.getMessage() == "[provider:run] tool_result"
+    ] == ["[provider:run] tool_result"] * len(expected_results)
+    assert all(json.dumps(response) not in caplog.text for response in expected_results.values())
 
 
 @pytest.mark.asyncio

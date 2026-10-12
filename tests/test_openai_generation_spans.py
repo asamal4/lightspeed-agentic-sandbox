@@ -761,10 +761,12 @@ async def test_openai_query_keeps_apply_patch_trace_input_out_of_events_and_logs
         event_logger = EventLogger("main")
         for event in events:
             event_logger.log(event)
-    assert "tool_use: apply_patch()" in caplog.text
-    assert "tool_use: read_file()" in caplog.text
+    assert "[provider:main] tool_use: apply_patch" in caplog.messages
+    assert "[provider:main] tool_use: read_file" in caplog.messages
+    assert "[provider:main] tool_result" in caplog.messages
     assert patch_input not in caplog.text
-    assert 'tool_result: {"safe": true}' in caplog.text
+    assert '{"safe": true}' not in caplog.text
+    assert "read result" not in caplog.text
     assert "result: tokens=13" in caplog.text
 
 

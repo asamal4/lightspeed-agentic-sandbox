@@ -66,8 +66,11 @@ async def no_sleep(_: float) -> None:
 
 
 @pytest.mark.asyncio
-async def test_benign_span_contains_only_controlled_metadata() -> None:
+async def test_benign_span_contains_only_controlled_metadata(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     tracer = FakeTracer()
+    caplog.set_level(logging.INFO)
 
     await inspect_tool_result(
         FakeClient({"injectionDetected": False, "category": "none"}),
@@ -93,6 +96,7 @@ async def test_benign_span_contains_only_controlled_metadata() -> None:
     assert attrs["llm.model"] == "model-name"
     assert attrs["gen_ai.tool.call.id"] == "opaque-call-id-1"
     assert "SECRET-RESULT-CONTENT" not in repr(attrs)
+    assert "SECRET-RESULT-CONTENT" not in caplog.text
 
 
 @pytest.mark.asyncio

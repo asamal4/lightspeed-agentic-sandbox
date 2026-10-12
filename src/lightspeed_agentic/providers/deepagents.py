@@ -44,6 +44,7 @@ from lightspeed_agentic.types import (
 
 logger = logging.getLogger(__name__)
 
+
 _JSON_SCHEMA_TYPE_MAP: dict[str, type[Any]] = {
     "string": str,
     "integer": int,
@@ -590,7 +591,7 @@ class DeepAgentsProvider(AgentProvider):
         parent_context = otel_context.get_current()
 
         from deepagents import create_deep_agent
-        from deepagents.backends import LocalShellBackend
+        from deepagents.backends import CompositeBackend, LocalShellBackend
 
         from lightspeed_agentic.inspection.errors import ToolResultSafetyInspectionFailed
 
@@ -618,10 +619,18 @@ class DeepAgentsProvider(AgentProvider):
         )
 
         chat_model = _resolve_model(options.model, options.reasoning_config)
-        backend = LocalShellBackend(
+        local_backend = LocalShellBackend(
             root_dir=options.cwd,
+            virtual_mode=False,
             inherit_env=True,
             max_output_bytes=MAX_TOOL_RETURN_CHARS,
+        )
+        skills_root = str(local_backend.cwd)
+        # Native physical paths; artifacts belong in the writable agent home.
+        backend = CompositeBackend(
+            default=local_backend,
+            routes={},
+            artifacts_root=os.path.join(os.environ.get("HOME", "/home/agent"), ".deepagents"),
         )
 
         instruction = TOOL_DATA_TRUST_INSTRUCTION.strip()
@@ -691,9 +700,8 @@ class DeepAgentsProvider(AgentProvider):
             main_name=agent_kwargs.get("name"),
         )
 
-        if has_skills(options.cwd):
-            # SkillsMiddleware paths are virtual to this backend; "/" maps to root_dir.
-            agent_kwargs["skills"] = ["/"]
+        if has_skills(skills_root):
+            agent_kwargs["skills"] = [f"{skills_root}/"]
 
         schema_model: Any | None = None
         if options.output_schema:

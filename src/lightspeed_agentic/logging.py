@@ -9,8 +9,6 @@ from lightspeed_agentic.types import ProviderEvent
 logger = logging.getLogger("lightspeed_agentic")
 
 MAX_THINKING_LOG = 2000
-MAX_TOOL_INPUT_LOG = 500
-MAX_TOOL_OUTPUT_LOG = 1000
 MAX_RESULT_LOG = 500
 THINKING_BUF_FLUSH = 50_000
 
@@ -42,16 +40,9 @@ class EventLogger:
                 self._flush_thinking()
             case "tool_call":
                 self._flush_thinking()
-                logger.info(
-                    "[provider:%s] tool_use: %s(%s)",
-                    self._phase,
-                    event.name,
-                    event.input[:MAX_TOOL_INPUT_LOG],
-                )
+                logger.info("[provider:%s] tool_use: %s", self._phase, event.name)
             case "tool_result":
-                logger.info(
-                    "[provider:%s] tool_result: %s", self._phase, event.output[:MAX_TOOL_OUTPUT_LOG]
-                )
+                logger.info("[provider:%s] tool_result", self._phase)
             case "result":
                 self._flush_thinking()
                 logger.info(

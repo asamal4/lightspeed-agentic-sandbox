@@ -24,12 +24,7 @@ from lightspeed_agentic.tracing import (
     parse_traceparent,
     set_json_span_attribute,
 )
-from lightspeed_agentic.types import (
-    AgentProvider,
-    ProviderQueryOptions,
-    ToolCallEvent,
-    ToolResultEvent,
-)
+from lightspeed_agentic.types import AgentProvider, ProviderQueryOptions
 
 logger = logging.getLogger("lightspeed_agentic")
 
@@ -46,17 +41,6 @@ class AgentResult:
 
 class ContextFormatError(ValueError):
     """``context`` JSON is present but missing fields required for prefix formatting."""
-
-
-def _developer_log_event(provider_name: str, event: Any) -> Any:
-    """Remove DeepAgents tool payloads from developer logs, retaining safe metadata."""
-    if provider_name != "deepagents":
-        return event
-    if event.type == "tool_call":
-        return ToolCallEvent(name=event.name, call_id=event.call_id)
-    if event.type == "tool_result":
-        return ToolResultEvent(call_id=event.call_id)
-    return event
 
 
 def _require_mapping(value: Any, path: str) -> dict[str, Any]:
@@ -284,7 +268,7 @@ async def run_agent_query(
                 )
                 event_logger = EventLogger("run")
                 async for event in result:
-                    event_logger.log(_developer_log_event(provider.name, event))
+                    event_logger.log(event)
                     audit_logger.process_event(event)
                     if event.type == "result":
                         set_json_span_attribute(

@@ -127,7 +127,8 @@ class TestToolSpanNaming:
         attrs = span_exporter.get_finished_spans()[0].attributes
         expected = json.loads(trace_input) if trace_input else {"content": ""}
         assert json.loads(attrs["gen_ai.tool.call.arguments"]) == expected
-        assert caplog.messages == ["[provider:analysis] tool_use: apply_patch(legacy input)"]
+        assert caplog.messages == ["[provider:analysis] tool_use: apply_patch"]
+        assert "legacy input" not in caplog.text
 
     @pytest.mark.parametrize("error_type", [None, "tool_error"])
     def test_tool_error_requires_explicit_provider_evidence(

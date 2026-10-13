@@ -150,6 +150,18 @@ def assert_flat_fields(bdd_context: dict[str, Any]) -> None:
     assert body.get("ticketId"), f"missing ticketId in {body!r}"
 
 
+@then("the response contains the generated skill-script result")
+def assert_skill_script_result(bdd_context: dict[str, Any]) -> None:
+    body = bdd_context["response_body"]
+    expected_summary = bdd_context["expected_script_summary"]
+    assert body.get("summary") == expected_summary, body
+    token = body.get("token")
+    assert isinstance(token, str), body
+    assert len(token) == 32, body
+    assert all(char in "0123456789abcdef" for char in token), body
+    assert body.get("status") == "ok", body
+
+
 @then("the response JSON validates against the output schema")
 def assert_jsonschema(bdd_context: dict[str, Any]) -> None:
     """Validate response body against the prepared output schema."""

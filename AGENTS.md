@@ -139,8 +139,8 @@ src/lightspeed_agentic/
 
 | Feature | DeepAgents (`deepagents`) | Gemini (`google-adk`) | OpenAI (`openai-agents`) |
 | --- | --- | --- | --- |
-| Tools | `LocalShellBackend` + MCP tools | Native `ExecuteBashTool` plus built-in web tools | Native `SandboxAgent` shell/filesystem/skills |
-| Skills | Skills dirs passed to `create_deep_agent()` | Native `SkillToolset` | Native `Skills` capability |
+| Tools | `LocalShellBackend` + `/skills/` `FilesystemBackend` route + MCP tools | Native `ExecuteBashTool` plus built-in web tools | Native `SandboxAgent` shell/filesystem/skills |
+| Skills | `/skills/` virtual route passed to `create_deep_agent()` when skills exist | Native `SkillToolset` | Native `Skills` capability |
 | Structured output | `ProviderStrategy` when thinking configured, else `ToolStrategy` via `response_format` | Native response schema path | `output_type` wrapper |
 | Streaming | `astream(stream_mode="messages")` | `StreamingMode.SSE` | `Runner.run_streamed()` |
 
@@ -148,6 +148,11 @@ Keep provider adapters thin. The SDK should own tool execution and skill
 discovery; `tools.py` holds the shared allowlist constant only. The SKILL.md
 presence gate lives in `skills.py` (`has_skills`) — do not duplicate it in
 adapters or put path helpers in `tools.py`.
+DeepAgents exposes skills through its native `/skills/` virtual route. The SDK
+adds the virtual-to-host path mapping needed by shell commands; scripts run through
+native `execute`, with setup and dependent commands combined in one shell call.
+See [the skills-route decision](.ai/spec/decisions/0002-sdk-native-skills-route.md)
+for the route, artifact storage, and execution limits.
 
 ## Code Conventions
 

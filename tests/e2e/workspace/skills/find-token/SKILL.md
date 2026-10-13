@@ -16,8 +16,6 @@ From the skill directory:
 bash scripts/find-token.sh
 ```
 
-Or use `run_skill_script` with `file_path=scripts/find-token.sh`.
-
 ## Output
 
 The script prints a full structured analysis JSON object (actionRequired, options with

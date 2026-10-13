@@ -18,6 +18,14 @@ def _run_query(bdd_context: dict[str, Any], run_runner: Any, **kwargs: Any) -> N
     store_run_result(bdd_context, res)
 
 
+@when("I run the agent with the prepared skill-script query")
+def post_skill_script_query(bdd_context: dict[str, Any], run_runner: Any) -> None:
+    kwargs: dict[str, Any] = {"output_schema": bdd_context.get("output_schema")}
+    if "system_prompt" in bdd_context:
+        kwargs["system_prompt"] = bdd_context["system_prompt"]
+    _run_query(bdd_context, run_runner, **kwargs)
+
+
 @when("I run the agent with the prepared echo-token query")
 def post_echo_token_query(bdd_context: dict[str, Any], run_runner: Any, provider_name: str) -> None:
     _ = provider_name

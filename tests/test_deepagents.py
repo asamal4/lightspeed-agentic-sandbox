@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
@@ -194,6 +195,99 @@ def _read_file_call(call_id: str, file_path: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("relative_cwd", [False, True])
+@pytest.mark.parametrize("delegate", [False, True])
+@pytest.mark.parametrize("skill_relative", [False, True])
+async def test_agent_reads_and_executes_skill_using_advertised_physical_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    relative_cwd: bool,
+    delegate: bool,
+    skill_relative: bool,
+) -> None:
+    ai_message = pytest.importorskip("langchain_core.messages").AIMessage
+    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
+    monkeypatch.chdir(tmp_path.parent)
+    skill_dir = tmp_path / "shell-skill"
+    script = skill_dir / "scripts" / "probe.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text('printf "SCRIPT_EXECUTED=%s\\n" "$1"\n')
+    skill_md = skill_dir / "SKILL.md"
+    skill_md.write_text("---\nname: shell-skill\ndescription: Run a script.\n---\nSKILL_READ\n")
+
+    command = (
+        f"cd {shlex.quote(str(skill_dir))} && bash scripts/probe.sh expected"
+        if skill_relative
+        else f"bash {shlex.quote(str(script))} expected"
+    )
+    responses = [
+        ai_message(content="", tool_calls=[_read_file_call("read-skill", str(skill_md))]),
+        ai_message(
+            content="",
+            tool_calls=[
+                {
+                    "name": "execute",
+                    "args": {"command": command},
+                    "id": "run-script",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        ai_message(content="The skill script ran."),
+    ]
+    if delegate:
+        responses.insert(
+            0,
+            ai_message(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "task",
+                        "args": {
+                            "description": f"Read {skill_md} and run its probe script.",
+                            "subagent_type": "general-purpose",
+                        },
+                        "id": "delegate-script",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        )
+        responses.append(ai_message(content="The delegated script ran."))
+    model, model_inputs = _capturing_fake_chat_model(responses)
+    provider = _real_deepagents_provider(monkeypatch, model)
+    events = await _collect_events(
+        provider,
+        _base_options(
+            cwd=tmp_path.name if relative_cwd else str(tmp_path),
+            tool_output_inspection_enabled=False,
+        ),
+    )
+
+    system_prompt = str(
+        next(message.content for message in model_inputs[0] if message.type == "system")
+    )
+    assert str(skill_md) in system_prompt
+    tool_results = {
+        event.call_id: event.output for event in events if isinstance(event, ToolResultEvent)
+    }
+    if delegate:
+        # Child tools are visible to the child model, not main-agent result events.
+        child_results = {
+            message.tool_call_id: str(message.content)
+            for messages in model_inputs
+            for message in messages
+            if message.type == "tool"
+        }
+        assert "SKILL_READ" in child_results["read-skill"]
+        assert "SCRIPT_EXECUTED=expected" in child_results["run-script"]
+    else:
+        assert "SKILL_READ" in tool_results["read-skill"]
+        assert "SCRIPT_EXECUTED=expected" in tool_results["run-script"]
+
+
+@pytest.mark.asyncio
 async def test_agent_discovers_a_skill_and_reads_its_instructions_and_reference(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -201,7 +295,7 @@ async def test_agent_discovers_a_skill_and_reads_its_instructions_and_reference(
     """Scenario: A mounted skill is available to the agent.
 
     Given a skills root containing a skill and its reference file
-    When the agent runs and reads both files using virtual paths
+    When the agent runs and reads both files using advertised physical paths
     Then the model receives the skill's name and description
     And the tool results contain the instructions and reference content.
     """
@@ -231,7 +325,7 @@ async def test_agent_discovers_a_skill_and_reads_its_instructions_and_reference(
                 tool_calls=[
                     _read_file_call(
                         "read-skill-md",
-                        f"/{skill_name}/SKILL.md",
+                        str(skill_dir / "SKILL.md"),
                     )
                 ],
             ),
@@ -240,7 +334,7 @@ async def test_agent_discovers_a_skill_and_reads_its_instructions_and_reference(
                 tool_calls=[
                     _read_file_call(
                         "read-reference",
-                        f"/{skill_name}/references/guide.md",
+                        str(reference_dir / "guide.md"),
                     )
                 ],
             ),
@@ -261,12 +355,122 @@ async def test_agent_discovers_a_skill_and_reads_its_instructions_and_reference(
     )
     assert f"**{skill_name}**: {skill_description}" in system_prompt
 
-    # And both files are readable through the backend's virtual paths.
+    assert str(skill_dir / "SKILL.md") in system_prompt
+
+    # And both files are readable through the advertised physical paths.
     tool_results = {
         event.call_id: event.output for event in events if isinstance(event, ToolResultEvent)
     }
     assert "SKILL_MD_READ_MARKER" in tool_results["read-skill-md"]
     assert "REFERENCE_READ_MARKER" in tool_results["read-reference"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("output_chars", [31_999, 32_000, 32_001])
+async def test_provider_shell_output_uses_32k_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    output_chars: int,
+) -> None:
+    ai_message = pytest.importorskip("langchain_core.messages").AIMessage
+    model, _ = _capturing_fake_chat_model(
+        [
+            ai_message(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "execute",
+                        "args": {"command": f"printf '%0{output_chars}d' 0"},
+                        "id": "large-output",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            ai_message(content="Done."),
+        ]
+    )
+    provider = _real_deepagents_provider(monkeypatch, model)
+    events = await _collect_events(
+        provider, _base_options(cwd=str(tmp_path), tool_output_inspection_enabled=False)
+    )
+    output = next(
+        event.output
+        for event in events
+        if isinstance(event, ToolResultEvent) and event.call_id == "large-output"
+    )
+    assert output.partition("\n")[0] == "0" * min(output_chars, 32_000)
+    assert ("truncated" in output) is (output_chars > 32_000)
+
+
+@pytest.mark.asyncio
+async def test_provider_file_tools_use_absolute_host_paths_without_rebasing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deepagents = pytest.importorskip("deepagents")
+    ai_message = pytest.importorskip("langchain_core.messages").AIMessage
+    root = tmp_path / "skills"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE_CONTENT")
+    model, _ = _capturing_fake_chat_model([ai_message(content="Done.")])
+    provider = _real_deepagents_provider(monkeypatch, model)
+    with patch("deepagents.create_deep_agent", wraps=deepagents.create_deep_agent) as create:
+        await _collect_events(
+            provider, _base_options(cwd=str(root), tool_output_inspection_enabled=False)
+        )
+    backend = create.call_args.kwargs["backend"]
+
+    assert backend.read(str(outside)).file_data["content"] == "OUTSIDE_CONTENT"
+    assert backend.write("inside.txt", "INSIDE_CONTENT").error is None
+    assert backend.read("inside.txt").file_data["content"] == "INSIDE_CONTENT"
+    assert backend.read(str(root / "inside.txt")).file_data["content"] == "INSIDE_CONTENT"
+
+
+@pytest.mark.asyncio
+async def test_provider_offloads_artifacts_to_home_not_skills_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deepagents = pytest.importorskip("deepagents")
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from lightspeed_agentic.inspection.summarization import (
+        create_tool_data_summarization_middleware,
+    )
+
+    home = tmp_path / "home"
+    home.mkdir()
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    model, _ = _capturing_fake_chat_model([AIMessage(content="Done.")])
+    provider = _real_deepagents_provider(monkeypatch, model)
+    with patch("deepagents.create_deep_agent", wraps=deepagents.create_deep_agent) as create:
+        await _collect_events(
+            provider, _base_options(cwd=str(skills_root), tool_output_inspection_enabled=False)
+        )
+    backend = create.call_args.kwargs["backend"]
+    original = ToolMessage(content="ARTIFACT_CONTENT\n" * 100, name="execute", tool_call_id="large")
+    filesystem = FilesystemMiddleware(backend=backend, tool_token_limit_before_evict=1)
+    request = SimpleNamespace(tool_call={"name": "execute"}, runtime=SimpleNamespace())
+
+    async def handler(_request: Any) -> ToolMessage:
+        return original
+
+    offloaded = await filesystem.awrap_tool_call(request, handler)
+    artifact_path = offloaded.content.split("path: ", 1)[1].splitlines()[0]
+    assert artifact_path.startswith(str(home / ".deepagents" / "large_tool_results") + "/")
+    assert backend.read(artifact_path, limit=1000).file_data["content"] == original.content
+
+    summary = create_tool_data_summarization_middleware(model, backend)
+    history_path = summary._offload_to_backend(
+        backend, [HumanMessage(content="Investigate."), original], "session-test"
+    )
+    assert history_path == str(home / ".deepagents/conversation_history/session-test.md")
+    assert "ARTIFACT_CONTENT" in backend.read(history_path, limit=1000).file_data["content"]
+    assert not list(skills_root.iterdir())
 
 
 @pytest.mark.asyncio

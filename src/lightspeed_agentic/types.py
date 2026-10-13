@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from lightspeed_agentic.mcp import AdmittedMCPProviderServer
 
 DEFAULT_MODEL = "claude-opus-4-6"
-MAX_TOOL_RETURN_CHARS = 4_000
+MAX_TOOL_RETURN_CHARS = 32_000
 TOOL_RETURN_PREVIEW_CHARS = 1_000
 
 

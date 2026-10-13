@@ -17,7 +17,6 @@ from typing import Any, cast
 
 from lightspeed_agentic.types import (
     MAX_TOOL_RETURN_CHARS,
-    TOOL_RETURN_PREVIEW_CHARS,
     AgentProvider,
     ContentBlockStopEvent,
     ProviderEvent,
@@ -47,9 +46,12 @@ def _trim_tool_response(
 
     return {
         "status": "truncated",
-        "preview": serialized[:TOOL_RETURN_PREVIEW_CHARS],
+        "preview": serialized[:MAX_TOOL_RETURN_CHARS],
         "original_size": len(serialized),
-        "message": "Tool output was truncated; request a narrower result if needed.",
+        "message": (
+            f"Tool output was truncated to {MAX_TOOL_RETURN_CHARS} characters; "
+            "request a narrower result if needed."
+        ),
     }
 
 

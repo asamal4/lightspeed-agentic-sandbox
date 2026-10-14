@@ -136,7 +136,7 @@ CMD ["python3.12", "-m", "lightspeed_agentic.batch"]
 LABEL name="openshift-lightspeed/lightspeed-agentic-sandbox-rhel9" \
       summary="Multi-provider agent sandbox for OpenShift Lightspeed" \
       description="Python agent with DeepAgents, Gemini, and OpenAI provider support" \
-      cpe="cpe:/a:redhat:openshift_lightspeed:1::el9" \
+      cpe="cpe:/a:redhat:openshift_lightspeed:2::el9" \
       com.redhat.component="openshift-lightspeed" \
       io.k8s.display-name="OpenShift Lightspeed Agentic Sandbox" \
       io.k8s.description="Python agent with DeepAgents, Gemini, and OpenAI provider support" \

@@ -3,6 +3,18 @@
 Audience: AI agents. File paths and symbols allowed here.
 Package tree: `AGENTS.md`. Behavioral rules: `what/run-api.md`, `what/provider-contract.md`, `what/configuration.md`, `what/audit-logging.md`.
 
+## Target: One DeepAgents Harness [PLANNED: OLS-4434]
+
+Behavioral authority: [provider-contract.md rules 50–67](../what/provider-contract.md#deepagents-consolidation-planned-ols-4434). Decision: [0003](../decisions/0003-single-deepagents-harness.md). The three-harness data flow and SDK-specific hooks below describe the current/retiring architecture, not the completed target.
+
+1. Resolve generic operator configuration into a provider route/model and native credential settings, independently of the fixed DeepAgents harness. Keep readiness, TLS, input construction, and MCP discovery/admission at their existing boundaries.
+2. Construct the route-appropriate LangChain chat model through a narrow model integration. Route-specific API selection, auth, reasoning, shaping capability, and metadata handling belong here; do not grow an Anthropic-only model resolver into multiple full agent implementations.
+3. Run one shared DeepAgents adapter behind the existing options/events boundary. Use native DeepAgents shell/filesystem and skills, admitted MCP tool objects, shared inspection/wrapping, and a common LangChain event/callback path. Do not retain ADK/OpenAI Agents tool managers or parallel instrumentation hooks.
+4. Shape required structured output using the route-appropriate mechanism, then preserve existing batch Result/status, cancellation, resource cleanup, and trace shutdown behavior. All required limits remain in force.
+5. After offline/live parity evidence and telemetry compatibility review, remove retired adapters/factory selections/direct harness extras and regenerate dependency/build inputs. Exact model-integration classes and versions are implementation choices to verify, not support claims made by this spec.
+
+Keep model integration responsibilities separate from common harness behavior; no new plugin registry or external proxy is required. Historical telemetry smoke results below do not prove this target. Provider trace changes require the parent collection contract's review/versioning gate.
+
 ## Data Flow
 
 1. Startup: `batch.main()` reads `/input/`, then calls `resolve_sdk()`, `parse_reasoning_config()`, and `parse_mcp_servers()` (fail-fast on bad env), `run_readiness_checks()`, `init_tracer()` when `otel_runtime_enabled()`, and `create_provider()`. [PLANNED: OLS-3743] Startup also requires and validates `LIGHTSPEED_AGENT_TIMEOUT_SECONDS` and `LIGHTSPEED_AGENT_MAX_TURNS` before provider invocation.

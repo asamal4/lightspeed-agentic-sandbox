@@ -2,6 +2,10 @@
 
 The lightspeed-agentic-sandbox is a multi-provider agent runtime that runs inside ephemeral Kubernetes pods as a **one-shot batch process**. The OpenShift Lightspeed operator mounts input files, starts the container, and reads the Result CR and exit status. The runtime wraps DeepAgents (Anthropic/Claude), Gemini, and OpenAI SDKs behind a unified provider abstraction.
 
+## Planned Single-Harness Architecture [PLANNED: OLS-4434]
+
+The target runtime uses one shared DeepAgents adapter for every existing model route, with narrow LangChain model integrations for provider-specific API/authentication, reasoning, structured output, and metadata. DeepAgents owns tools/skills, admitted MCP tool integration, safety, and the common event path. Operator inputs, credential contracts, batch lifecycle, and Result publishing remain unchanged. ADK/OpenAI Agents adapters and tool implementations retire only after the route-specific verification gates pass; vendor client libraries may remain. This section describes a target, not implemented parity. Normative rules and migration gates: [provider-contract.md](provider-contract.md#deepagents-consolidation-planned-ols-4434). Decision: [0003](../decisions/0003-single-deepagents-harness.md).
+
 ## Behavioral Rules
 
 ### System Role
@@ -56,5 +60,6 @@ See `configuration.md` for the full environment variable reference.
 
 | Ticket | Summary |
 |---|---|
+| OLS-4434 | Consolidate every existing provider route on DeepAgents; preserve external contracts and apply shared DeepAgents tools/safety |
 | OLS-3033 | Align operator-passed `allowedTools` and `llm` with provider options |
 | OLS-3491 | System instructions via `/input/system-prompt` only |

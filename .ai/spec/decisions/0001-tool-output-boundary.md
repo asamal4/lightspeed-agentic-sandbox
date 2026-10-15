@@ -12,6 +12,8 @@ OLS-3929 marks external tool output as untrusted reference data and supplies the
 This sandbox change covers DeepAgents only, including its main agent and general-purpose subagent.
 Gemini ADK and OpenAI Agents behavior remains unchanged.
 
+[PLANNED: OLS-4434] [Decision 0003](0003-single-deepagents-harness.md) migrates their model routes to DeepAgents and applies this same boundary there. The unchanged-behavior statements in this record refer to the legacy harnesses before retirement; the boundary semantics remain in force.
+
 This decision records the SAFE-02 behavior for DeepAgents. The OLS-4356 branch implements this behavior. This decision defines model-visible boundaries, inspection ordering, event preservation, and verification requirements.
 
 ## Context

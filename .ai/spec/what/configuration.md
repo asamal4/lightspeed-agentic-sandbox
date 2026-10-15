@@ -4,6 +4,12 @@ Audience: AI agents (Claude). Precision over narrative.
 
 Cross-references: how options are consumed in code → `how/provider-architecture.md`. Batch input and agent behavior → `run-api.md`. Provider options → `provider-contract.md`.
 
+## OLS-4434 Target Configuration [PLANNED: OLS-4434]
+
+All supported provider routes will resolve to the single DeepAgents harness while retaining the operator env vars, credential Secret shapes/mounts, endpoint/project/region/API-version settings, and explicit-model precedence below. Provider route and model family MUST remain independent of harness selection: a fixed `deepagents` name MUST NOT select `ANTHROPIC_MODEL` or an Anthropic fallback for Google/OpenAI routes. No operator-facing harness flag is added.
+
+For a migrated route, [provider-contract.md rules 50–67](provider-contract.md#deepagents-consolidation-planned-ols-4434) supersede requirements below to select the Gemini/OpenAI harness, construct ADK/OpenAI Agents objects, or leave their safety behavior unchanged. Native model/API and credential behavior remains required through the model integration, including Azure native client/authentication, SDK-delegated refresh, provider-specific reasoning, TLS, and existing endpoint-dependent API selection. Rules for unmigrated routes remain effective until retirement. The completed image has DeepAgents tools/skills and admitted MCP tools only, without ADK/OpenAI Agents harness extras; required vendor API/credential libraries may remain. Explicit per-run model, `LIGHTSPEED_MODEL`, and route-specific legacy model inputs retain that precedence. Preserve the Anthropic default for Anthropic routes; a Google/OpenAI route without an appropriate model/default fails resolution rather than inheriting the Anthropic package default. Operator-created runs already set the required `LIGHTSPEED_MODEL`.
+
 ## Behavioral Rules
 
 1. **Operator env var contract.** The operator sets generic `LIGHTSPEED_*` env vars on the sandbox pod template. The sandbox MUST NOT depend on the operator setting any SDK-specific env vars. The operator sets:
@@ -239,6 +245,7 @@ OPENAI_API_KEY: <token-or-placeholder>
 
 ## Planned Changes
 
+- [PLANNED: OLS-4434] Preserve every existing provider route and external configuration contract while selecting DeepAgents for all routes; separate route/model resolution from harness identity and retire legacy harness extras. See the target configuration section above.
 - OLS-3857 per-MCP-server trust selection remains out of scope.
 - Konflux pipeline and lockfile policy updates as Red Hat platform requirements evolve. [PLANNED: OLS-2894]
 - [PLANNED: OLS-3743] Require operator-resolved `LIGHTSPEED_AGENT_TIMEOUT_SECONDS` and `LIGHTSPEED_AGENT_MAX_TURNS`; remove the sandbox-owned timeout and turn defaults.

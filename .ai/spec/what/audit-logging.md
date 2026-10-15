@@ -4,6 +4,12 @@ Implementation spec for compliance logging and the named three-provider trace pr
 
 Telemetry follows the named [OTel GenAI profile pinned at commit `4f85037ef86e92c510d2ef881a58f1076f6fc0e4`](https://github.com/open-telemetry/semantic-conventions-genai/tree/4f85037ef86e92c510d2ef881a58f1076f6fc0e4/docs/gen-ai). Upstream status at that revision is Development; this does not claim every optional convention or add a dependency.
 
+## Harness Consolidation [PLANNED: OLS-4434]
+
+For migrated routes, [provider-contract.md rules 57 and 60–62](provider-contract.md#deepagents-consolidation-planned-ols-4434) and [data-collection.md](data-collection.md#harness-consolidation-planned-ols-4434) replace SDK-specific ADK/OpenAI Agents hook requirements below with a shared DeepAgents/LangChain capture path. Keep normalized event types, approved audit/log projections, run correlation, real provider/call metadata, usage, and configured capture/export gates; built-in tools follow DeepAgents names. Inspected tool paths use payload-free developer logging for all migrated models.
+
+The parent inspection/collection contract remains authoritative for native source evidence: a successful native tool source span retains its raw callback result independently of later inspection. Rejection suppresses normalized result events and Result CRs, not completed source evidence; compliance copies follow the parent content policy. This exception takes precedence over older statements below that could otherwise be read to suppress all canonical source-result attributes. Changed native span/event/message behavior requires the parent component/Dataverse compatibility review and version decision before implementation merges; consolidation grants no waiver.
+
 ## Behavioral Rules
 
 ### Span Naming and Kinds

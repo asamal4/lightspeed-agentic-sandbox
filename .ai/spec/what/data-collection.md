@@ -4,6 +4,12 @@ Sandbox producer contract for the named three-provider GenAI trace profile, alig
 
 For the sandbox producer only, this profile supersedes conflicting candidate/event producer requirements in `ols/.ai/spec/what/agentic-data-collection.md`. The parent contract and downstream collection requirements remain unchanged. Invocation/tool spans, DeepAgents/OpenAI generation capture, Gemini generation capture, and exact-scope `gcp.vertex.agent` exclusion at stdout and OTLP trace exporters are implemented.
 
+## Harness Consolidation [PLANNED: OLS-4434]
+
+The consolidated target replaces ADK/OpenAI Agents event capture with shared DeepAgents/LangChain capture for every model route. For migrated routes, [provider-contract.md rules 57 and 60–62](provider-contract.md#deepagents-consolidation-planned-ols-4434) govern this transition; ADK callback/aggregation and OpenAI Agents hook details below describe retired implementations rather than interfaces to emulate. Preserve the existing data contract's observed content, usage, actual IDs/provider identity, ancestry, and failure semantics, including the parent contract's independent native tool-source evidence policy. No source-result suppression may be inferred solely from a rejected normalized event.
+
+Google operation names/parts, removed native SDK spans/events, built-in tool names, and safety-induced changes can affect downstream interpretation. The workspace collection contract's rules 41–42 require compatibility classification, an explicit schema/data-contract version decision, component/Dataverse-owner approval, and downstream readiness before a breaking cutover. This spec does not choose a new version, change the pinned conventions, waive that review, or claim that old three-harness smoke evidence verifies consolidation. Existing capture/export controls and collection topology are unchanged.
+
 ## Producer Boundary
 
 1. When the existing trace runtime records spans, canonical profile content is stored in span attributes. Do not add a custom transcript attribute/event or skill events, and do not infer skill use from text or generic tool output.

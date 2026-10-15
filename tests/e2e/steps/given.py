@@ -160,6 +160,27 @@ def prepare_context_approved_option_echo(bdd_context: dict[str, Any]) -> None:
     )
 
 
+@given("the single-file skill script task has been prepared")
+def prepare_single_file_skill_script(bdd_context: dict[str, Any]) -> None:
+    argument = f"literal-{secrets.token_hex(8)} with spaces"
+    bdd_context["expected_script_summary"] = f"argument:{argument}"
+    bdd_context["output_schema"] = ECHO_TOKEN_SCHEMA
+    bdd_context["query"] = (
+        "Use the script-workflows skill's single-file procedure with this exact argument: "
+        f"{argument}. Return the JSON produced by the script."
+    )
+
+
+@given("the command-chain skill script task has been prepared")
+def prepare_command_chain_skill_script(bdd_context: dict[str, Any]) -> None:
+    bdd_context["expected_script_summary"] = "same-shell-chain"
+    bdd_context["output_schema"] = ECHO_TOKEN_SCHEMA
+    bdd_context["query"] = (
+        "Use the script-workflows skill's command-chain procedure. Return the JSON "
+        "produced by the check script."
+    )
+
+
 @given("the echo-token skill query has been prepared")
 def prepare_echo_token(bdd_context: dict[str, Any]) -> None:
     bdd_context["system_prompt"] = (

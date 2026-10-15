@@ -121,9 +121,16 @@ Each adapter is a thin wrapper. The SDK owns tool execution, skill discovery, an
 
 | Provider | SDK | Structured Output | Skills | Tools |
 |---|---|---|---|---|
-| DeepAgents | `deepagents` + `langchain-anthropic` | `ProviderStrategy` when thinking configured, else `ToolStrategy` via `response_format` | Skills dirs passed to `create_deep_agent()` | `LocalShellBackend` + MCP tools |
+| DeepAgents | `deepagents` + `langchain-anthropic` | `ProviderStrategy` when thinking configured, else `ToolStrategy` via `response_format` | `/skills/` virtual `CompositeBackend` route when skills exist | `LocalShellBackend` (default) + `/skills/` `FilesystemBackend` route + MCP tools |
 | Gemini | `google-adk` | Response schema on content config | `SkillToolset` from directory | `ExecuteBashTool` + web tools |
 | OpenAI | `openai-agents` | `output_type` wrapper | `Skills` capability | `SandboxAgent` shell/filesystem |
+
+DeepAgents exposes skills at virtual `/skills/` paths and relies on its SDK
+middleware to provide the corresponding host paths to shell commands. Scripts
+run through native `execute`; dependent setup/check commands must share one shell
+call. Artifacts use writable `HOME/.deepagents` storage. See the
+[skills-route decision](.ai/spec/decisions/0002-sdk-native-skills-route.md)
+for path mapping and execution limits.
 
 ## Container & Deployment
 

@@ -211,7 +211,7 @@ Feature files and unit tests are also listed under each behavioral spec. Summary
 |--------------|--------------|-----------|
 | [sandbox_e2e.feature](../../../tests/e2e/features/sandbox_e2e.feature) | run-api, audit-logging | Context echo, OTEL export |
 | [structured_output.feature](../../../tests/e2e/features/structured_output.feature) | run-api, provider-contract | JSON schema, text fallback, adversarial schema |
-| [skills.feature](../../../tests/e2e/features/skills.feature) | provider-contract | Skills mount, echo-token skill, nonskill query |
+| [skills.feature](../../../tests/e2e/features/skills.feature) | provider-contract | Skills mount, echo-token skill, single-script argument containing spaces, same-shell setup/check command chain, nonskill query (all provider matrix entries) |
 | [analysis_output.feature](../../../tests/e2e/features/analysis_output.feature) | run-api, provider-contract | find-token skill, operator analysis + component tokens |
 | [mcp.feature](../../../tests/e2e/features/mcp.feature) | provider-contract, configuration | MCP wiring, tool invoke, MCP tool failure envelope |
 | [tool_result_inspection.feature](../../../tests/e2e/features/tool_result_inspection.feature) | provider-contract | DeepAgents tool-result inspection enabled for a focused MCP run |

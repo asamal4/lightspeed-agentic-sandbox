@@ -20,6 +20,22 @@ Feature: Skills
     And the response JSON validates against the output schema
     And the response contains the generated token
 
+  Scenario: Single-file skill script receives its requested argument
+    Given the sandbox service is running with skills
+    And the single-file skill script task has been prepared
+    When I run the agent with the prepared skill-script query
+    Then the run completes successfully
+    And the response JSON validates against the output schema
+    And the response contains the generated skill-script result
+
+  Scenario: Skill command chain shares setup state in one shell
+    Given the sandbox service is running with skills
+    And the command-chain skill script task has been prepared
+    When I run the agent with the prepared skill-script query
+    Then the run completes successfully
+    And the response JSON validates against the output schema
+    And the response contains the generated skill-script result
+
   Scenario: Non-skill query is unaffected by mounted skills
     Given the sandbox service is running with skills
     And no output schema will be sent

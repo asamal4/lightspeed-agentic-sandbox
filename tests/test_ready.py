@@ -177,6 +177,39 @@ def test_run_readiness_checks_provider_env_fails(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize(
+    ("missing_source", "expected_route_status"),
+    [
+        (True, "error: missing credential source for anthropic"),
+        (False, "error: missing API key for anthropic"),
+    ],
+)
+def test_direct_anthropic_readiness_requires_resolved_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    missing_source: bool,
+    expected_route_status: str,
+) -> None:
+    from lightspeed_agentic.config import AnthropicCredentialSource
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-key")
+    source = None if missing_source else AnthropicCredentialSource()
+    family = ResolvedModelFamily(
+        "anthropic",
+        ("ANTHROPIC_API_KEY",),
+        hosting="anthropic",
+        model="test-model",
+        credentials=source,
+    )
+    _sdk, route = resolve_model_route(model_family=family)
+
+    assert route is not None
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is False
+    assert checks == {"provider_env": "ok", "model_route": expected_route_status}
+
+
+@pytest.mark.parametrize(
     ("project", "region", "expected_route_status"),
     [
         ("", "us-east5", "error: missing project for vertex/anthropic"),
@@ -186,6 +219,7 @@ def test_run_readiness_checks_provider_env_fails(monkeypatch: pytest.MonkeyPatch
 def test_run_readiness_checks_rejects_vertex_route_without_parameters(
     project: str, region: str, expected_route_status: str
 ) -> None:
+    from lightspeed_agentic.config import VertexProviderParameters
     from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
     from lightspeed_agentic.providers.models.anthropic import create_vertex_model
 
@@ -194,7 +228,10 @@ def test_run_readiness_checks_rejects_vertex_route_without_parameters(
         route="vertex/anthropic",
         model="test-model",
         create_model=create_vertex_model,
-        model_parameters=ModelParameters(model="test-model", project=project, region=region),
+        model_parameters=ModelParameters(
+            model="test-model",
+            provider=VertexProviderParameters(project=project, region=region),
+        ),
         telemetry_provider="gcp.vertex_ai",
         structured_output_method="json_schema",
     )
@@ -219,6 +256,7 @@ def test_run_readiness_checks_validates_vertex_gemini_route(
     region: str | None,
     expected_route_status: str,
 ) -> None:
+    from lightspeed_agentic.config import VertexCredentialSource, VertexProviderParameters
     from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
     from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
 
@@ -229,8 +267,8 @@ def test_run_readiness_checks_validates_vertex_gemini_route(
         create_model=create_vertex_gemini_model,
         model_parameters=ModelParameters(
             model="gemini-2.5-flash",
-            project=project,
-            region=region,
+            provider=VertexProviderParameters(project=project, region=region or ""),
+            credentials=VertexCredentialSource(Path("/unused/vertex-credentials.json")),
         ),
         telemetry_provider="gcp.vertex_ai",
         structured_output_method="json_schema",
@@ -242,7 +280,57 @@ def test_run_readiness_checks_validates_vertex_gemini_route(
     assert checks == {"provider_env": "ok", "model_route": expected_route_status}
 
 
-def test_run_readiness_checks_rejects_bedrock_route_without_region() -> None:
+def test_run_readiness_checks_rejects_vertex_route_without_provider_parameters() -> None:
+    from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
+    from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
+
+    family = ResolvedModelFamily("google", (), hosting="vertex")
+    route = ResolvedModelRoute(
+        route="vertex/google",
+        model="gemini-2.5-flash",
+        create_model=create_vertex_gemini_model,
+        model_parameters=ModelParameters(model="gemini-2.5-flash"),
+        telemetry_provider="gcp.vertex_ai",
+        structured_output_method="json_schema",
+    )
+
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is False
+    assert checks == {
+        "provider_env": "ok",
+        "model_route": "error: missing provider parameters for vertex/google",
+    }
+
+
+def test_run_readiness_checks_rejects_vertex_route_without_credential_source() -> None:
+    from lightspeed_agentic.config import VertexProviderParameters
+    from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
+    from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
+
+    family = ResolvedModelFamily("google", (), hosting="vertex")
+    route = ResolvedModelRoute(
+        route="vertex/google",
+        model="gemini-2.5-flash",
+        create_model=create_vertex_gemini_model,
+        model_parameters=ModelParameters(
+            model="gemini-2.5-flash",
+            provider=VertexProviderParameters(project="test-project", region="us-central1"),
+        ),
+        telemetry_provider="gcp.vertex_ai",
+        structured_output_method="json_schema",
+    )
+
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is False
+    assert checks == {
+        "provider_env": "ok",
+        "model_route": "error: missing credential source for vertex/google",
+    }
+
+
+def test_run_readiness_checks_rejects_bedrock_route_without_provider_parameters() -> None:
     from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
     from lightspeed_agentic.providers.models.anthropic import create_bedrock_model
 
@@ -261,21 +349,114 @@ def test_run_readiness_checks_rejects_bedrock_route_without_region() -> None:
     assert ready is False
     assert checks == {
         "provider_env": "ok",
+        "provider_credentials": "error: missing Bedrock credential source",
+        "model_route": "error: missing provider parameters for bedrock/anthropic",
+    }
+
+
+def test_run_readiness_checks_rejects_bedrock_route_without_region() -> None:
+    from lightspeed_agentic.config import BedrockProviderParameters
+    from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
+    from lightspeed_agentic.providers.models.anthropic import create_bedrock_model
+
+    family = ResolvedModelFamily("anthropic", (), hosting="bedrock")
+    route = ResolvedModelRoute(
+        route="bedrock/anthropic",
+        model="test-model",
+        create_model=create_bedrock_model,
+        model_parameters=ModelParameters(
+            model="test-model", provider=BedrockProviderParameters(region="")
+        ),
+        telemetry_provider="aws.bedrock",
+        structured_output_method="function_calling",
+    )
+
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is False
+    assert checks == {
+        "provider_env": "ok",
+        "provider_credentials": "error: missing Bedrock credential source",
         "model_route": "error: missing region for bedrock/anthropic",
     }
 
 
-def test_run_readiness_checks_accepts_default_bedrock_region() -> None:
+def test_run_readiness_checks_accepts_default_bedrock_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lightspeed_agentic.config import resolve_model_family
     from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
 
-    family = ResolvedModelFamily("anthropic", (), hosting="bedrock", model="test-model")
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "bedrock")
+    monkeypatch.setenv("LIGHTSPEED_MODEL", "test-model")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    family = resolve_model_family()
     _, route = resolve_model_route(model_family=family)
 
     assert isinstance(route, ResolvedModelRoute)
     ready, checks = run_readiness_checks(family, route)
 
     assert ready is True
-    assert checks == {"provider_env": "ok", "model_route": "ok"}
+    assert checks == {
+        "provider_env": "ok",
+        "provider_credentials": "ok",
+        "model_route": "ok",
+    }
+
+
+def test_bedrock_readiness_accepts_credentials_from_mounted_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lightspeed_agentic.config import resolve_model_family
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    credentials_dir = tmp_path / "llm-credentials"
+    credentials_dir.mkdir()
+    (credentials_dir / "aws_access_key_id").write_text("file-access", encoding="utf-8")
+    (credentials_dir / "aws_secret_access_key").write_text("file-secret", encoding="utf-8")
+    (credentials_dir / "role_arn").write_text(
+        "arn:aws:iam::123456789012:role/test", encoding="utf-8"
+    )
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "bedrock")
+    monkeypatch.setenv("LIGHTSPEED_MODEL", "test-model")
+    monkeypatch.setenv("LIGHTSPEED_LLM_CREDENTIALS_PATH", str(credentials_dir))
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+    family = resolve_model_family()
+    _, route = resolve_model_route(model_family=family)
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is True
+    assert checks == {
+        "provider_env": "ok",
+        "provider_credentials": "ok",
+        "model_route": "ok",
+    }
+
+
+def test_bedrock_readiness_rejects_partial_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lightspeed_agentic.config import resolve_model_family
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "bedrock")
+    monkeypatch.setenv("LIGHTSPEED_MODEL", "test-model")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+    family = resolve_model_family()
+    _, route = resolve_model_route(model_family=family)
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is False
+    assert checks == {
+        "provider_env": "ok",
+        "provider_credentials": "error: missing aws_secret_access_key",
+        "model_route": "ok",
+    }
 
 
 def test_read_mounted_secret_returns_content(tmp_path: Path) -> None:

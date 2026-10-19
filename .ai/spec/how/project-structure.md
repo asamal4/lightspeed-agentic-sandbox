@@ -21,7 +21,7 @@ Do not maintain a duplicate path inventory here.
 
 - **Package:** `lightspeed_agentic` under `src/` (hatchling src-layout).
 - **Provider adapters:** `providers/deepagents.py` and `providers/openai.py` export the active provider classes. DeepAgents receives a resolved model route for Anthropic and Vertex/Google; OpenAI remains on its legacy SDK path.
-- **Model routing/construction:** `providers/model_router.py` defines `ResolvedModelRoute`, `ModelParameters`, and the `ModelCreator` callable alias. `providers/models/anthropic.py` provides direct, Bedrock, and Vertex Anthropic constructors; `providers/models/gemini.py` constructs the Vertex Gemini model. Optional SDK imports remain lazy.
+- **Model routing/construction:** `config.py` defines provider settings, resolved Anthropic credential values, cloud credential references, and `ModelParameters`; `providers/model_router.py` defines `ResolvedModelRoute` and the `ModelCreator` callable alias. `providers/models/anthropic.py` provides direct, Bedrock, and Vertex Anthropic constructors; `providers/models/gemini.py` constructs the Vertex Gemini model. Optional SDK imports remain lazy.
 - **Batch / agent:** `batch.py` (entrypoint + input reading), `run_agent.py` (provider query loop).
 - **Publish results:** `publish_results/publish.py`, `publish_results/status.py`.
 - **Observability modules:** `audit.py` (span events), `metrics.py` (histograms), `tracing.py` (TracerProvider + traceparent parsing).

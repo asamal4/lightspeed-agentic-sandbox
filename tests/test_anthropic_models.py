@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import ssl
 import subprocess
 import sys
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -26,6 +28,17 @@ def _credential_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # Explicit constructors must not select a backend from these flags.
     monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "1")
     monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+
+
+@pytest.fixture(autouse=True)
+def _stub_vertex_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.auth.credentials import AnonymousCredentials
+
+    from lightspeed_agentic.providers import cloud_credentials
+
+    monkeypatch.setattr(
+        cloud_credentials, "create_vertex_credentials", lambda _source: AnonymousCredentials()
+    )
 
 
 @pytest.fixture
@@ -59,41 +72,75 @@ def http_clients(
 )
 def test_direct_model_preserves_endpoint_bearer_auth_thinking_and_tls(
     http_clients: tuple[httpx.Client, httpx.AsyncClient],
+    monkeypatch: pytest.MonkeyPatch,
     reasoning_config: dict[str, Any] | None,
     expected_thinking: dict[str, Any] | None,
 ) -> None:
     from langchain_anthropic import ChatAnthropic
 
+    from lightspeed_agentic.config import AnthropicCredentialSource
     from lightspeed_agentic.providers.model_router import ModelParameters
     from lightspeed_agentic.providers.models.anthropic import create_direct_model
 
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "environment-api-key")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "environment-bearer-token")
     model = create_direct_model(
         ModelParameters(
             model="claude-sonnet-4-6",
             base_url="https://anthropic.example.test",
-            auth_token="test-bearer-token",  # noqa: S106 — dummy credential
+            credentials=AnthropicCredentialSource(
+                api_key="resolved-api-key",
+                auth_token="resolved-bearer-token",  # noqa: S106 - Test bearer credential.
+            ),
         ),
         reasoning_config,
     )
 
     assert isinstance(model, ChatAnthropic)
     assert model.model == "claude-sonnet-4-6"
+    assert model.anthropic_api_key.get_secret_value() == "resolved-api-key"
     assert model.thinking == expected_thinking
     assert model._client.base_url == "https://anthropic.example.test"
     assert model._async_client.base_url == "https://anthropic.example.test"
-    assert model._client.default_headers["Authorization"] == "Bearer test-bearer-token"
-    assert model._async_client.default_headers["Authorization"] == "Bearer test-bearer-token"
+    assert model._client.default_headers["Authorization"] == "Bearer resolved-bearer-token"
+    assert model._async_client.default_headers["Authorization"] == "Bearer resolved-bearer-token"
     assert model._client._client is http_clients[0]
     assert model._async_client._client is http_clients[1]
+
+
+def test_direct_model_uses_resolved_credentials_not_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lightspeed_agentic.config import AnthropicCredentialSource, ModelParameters
+    from lightspeed_agentic.providers.models.anthropic import create_direct_model
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("LANGSMITH_GATEWAY", "true")
+    monkeypatch.setenv("LANGSMITH_GATEWAY_API_KEY", "gateway-key")
+
+    model = create_direct_model(
+        ModelParameters(
+            model="claude-sonnet-4-6",
+            credentials=AnthropicCredentialSource(api_key="resolved-api-key"),
+        )
+    )
+
+    assert model.anthropic_api_key.get_secret_value() == "resolved-api-key"
 
 
 def test_direct_model_delegates_api_key_credentials_to_sdk(
     http_clients: tuple[httpx.Client, httpx.AsyncClient],
 ) -> None:
+    from lightspeed_agentic.config import AnthropicCredentialSource
     from lightspeed_agentic.providers.model_router import ModelParameters
     from lightspeed_agentic.providers.models.anthropic import create_direct_model
 
-    model = create_direct_model(ModelParameters(model="claude-sonnet-4-6"))
+    model = create_direct_model(
+        ModelParameters(
+            model="claude-sonnet-4-6",
+            credentials=AnthropicCredentialSource(api_key="test-api-key"),
+        )
+    )
 
     assert model._client.api_key == "test-api-key"
     assert model._async_client.api_key == "test-api-key"
@@ -106,17 +153,24 @@ def test_direct_model_delegates_api_key_credentials_to_sdk(
 )
 def test_bedrock_model_preserves_inference_profile_region_endpoint_and_tls(
     http_clients: tuple[httpx.Client, httpx.AsyncClient],
+    monkeypatch: pytest.MonkeyPatch,
     reasoning_config: dict[str, Any] | None,
 ) -> None:
     from langchain_aws import ChatAnthropicBedrock
 
+    from lightspeed_agentic.config import BedrockCredentialSource, BedrockProviderParameters
     from lightspeed_agentic.providers.model_router import ModelParameters
     from lightspeed_agentic.providers.models.anthropic import create_bedrock_model
 
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "stale-session-token")
     model = create_bedrock_model(
         ModelParameters(
             model="global.anthropic.claude-haiku-4-5-20251001-v1:0",
-            region="us-west-2",
+            provider=BedrockProviderParameters(region="us-west-2"),
+            credentials=BedrockCredentialSource(
+                access_key_id="parameter-access-key",
+                secret_access_key="parameter-secret-key",  # noqa: S106 - test credential
+            ),
             base_url="https://bedrock.example.test",
         ),
         reasoning_config,
@@ -130,6 +184,78 @@ def test_bedrock_model_preserves_inference_profile_region_endpoint_and_tls(
     assert model._async_client.base_url == "https://bedrock.example.test"
     assert model._client.aws_region == "us-west-2"
     assert model._async_client.aws_region == "us-west-2"
+    assert model._client.aws_access_key == "parameter-access-key"
+    assert model._client.aws_secret_key == "parameter-secret-key"  # noqa: S105
+    assert model._client.aws_session_token is None
+    assert os.environ["AWS_ACCESS_KEY_ID"] == "parameter-access-key"
+    assert os.environ["AWS_SECRET_ACCESS_KEY"] == "parameter-secret-key"  # noqa: S105
+    assert "AWS_SESSION_TOKEN" not in os.environ
+    assert model._client._client is http_clients[0]
+    assert model._async_client._client is http_clients[1]
+
+
+def test_bedrock_role_model_signs_with_refreshable_role_credentials_without_env_mutation(
+    http_clients: tuple[httpx.Client, httpx.AsyncClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from botocore.credentials import Credentials
+
+    from lightspeed_agentic.config import BedrockCredentialSource, BedrockProviderParameters
+    from lightspeed_agentic.providers import cloud_credentials
+    from lightspeed_agentic.providers.model_router import ModelParameters
+    from lightspeed_agentic.providers.models.anthropic import create_bedrock_model
+
+    role_credentials = Credentials(
+        access_key="assumed-access-key",
+        secret_key="assumed-secret-key",  # noqa: S106 - test credential
+        token="assumed-session-token",  # noqa: S106 - test credential
+    )
+    monkeypatch.setattr(
+        cloud_credentials,
+        "create_bedrock_credentials",
+        lambda _source, _region: role_credentials,
+    )
+    original_aws_env = {
+        key: os.environ.get(key)
+        for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+    }
+    model = create_bedrock_model(
+        ModelParameters(
+            model="claude-sonnet-4-6",
+            provider=BedrockProviderParameters(region="us-west-2"),
+            credentials=BedrockCredentialSource(
+                access_key_id="source-access-key",
+                secret_access_key="source-secret-key",  # noqa: S106 - test credential
+                role_arn="arn:aws:iam::123456789012:role/test",
+            ),
+        )
+    )
+
+    assert {key: os.environ.get(key) for key in original_aws_env} == original_aws_env
+    request = httpx.Request(
+        "POST",
+        "https://bedrock-runtime.us-west-2.amazonaws.com/model/test/invoke",
+        headers={"connection": "keep-alive"},
+        json={"prompt": "offline"},
+    )
+    model._client._prepare_request(request)
+    assert "Credential=assumed-access-key/" in request.headers["Authorization"]
+    assert request.headers["X-Amz-Security-Token"] == "assumed-session-token"
+
+    async def prepare_async_request() -> httpx.Request:
+        async_request = httpx.Request(
+            "POST",
+            "https://bedrock-runtime.us-west-2.amazonaws.com/model/test/invoke",
+            headers={"connection": "keep-alive"},
+            json={"prompt": "offline"},
+        )
+        await model._async_client._prepare_request(async_request)
+        return async_request
+
+    async_request = asyncio.run(prepare_async_request())
+    assert "Credential=assumed-access-key/" in async_request.headers["Authorization"]
+    assert async_request.headers["X-Amz-Security-Token"] == "assumed-session-token"
     assert model._client._client is http_clients[0]
     assert model._async_client._client is http_clients[1]
 
@@ -141,14 +267,18 @@ def test_vertex_model_preserves_project_region_endpoint_thinking_and_tls(
 ) -> None:
     from langchain_google_vertexai.model_garden import ChatAnthropicVertex
 
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
     from lightspeed_agentic.providers.model_router import ModelParameters
     from lightspeed_agentic.providers.models.anthropic import create_vertex_model
 
     model = create_vertex_model(
         ModelParameters(
             model="claude-sonnet-4-6@20260217",
-            project="test-project",
-            region="us-east5",
+            provider=VertexProviderParameters(project="test-project", region="us-east5"),
+            credentials=VertexCredentialSource(Path("/unused/credentials.json")),
             base_url="https://vertex.example.test",
         ),
         reasoning_config,
@@ -173,16 +303,24 @@ def test_vertex_model_uses_impersonated_credentials(
 ) -> None:
     from google.auth.credentials import AnonymousCredentials
 
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
     from lightspeed_agentic.providers import cloud_credentials
     from lightspeed_agentic.providers.model_router import ModelParameters
     from lightspeed_agentic.providers.models.anthropic import create_vertex_model
 
     impersonated = AnonymousCredentials()
-    monkeypatch.setattr(cloud_credentials, "create_vertex_credentials", lambda: impersonated)
+    monkeypatch.setattr(
+        cloud_credentials, "create_vertex_credentials", lambda _source: impersonated
+    )
 
     model = create_vertex_model(
         ModelParameters(
-            model="claude-sonnet-4-6@20260217", project="test-project", region="us-east5"
+            model="claude-sonnet-4-6@20260217",
+            provider=VertexProviderParameters(project="test-project", region="us-east5"),
+            credentials=VertexCredentialSource(Path("/unused/credentials.json")),
         )
     )
 
@@ -207,6 +345,10 @@ def test_vertex_model_uses_impersonated_credentials(
 async def test_vertex_requests_preserve_api_version_and_explicit_paths(
     monkeypatch: pytest.MonkeyPatch, endpoint: str | None, expected_root: str
 ) -> None:
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
     from lightspeed_agentic.providers.model_router import ModelParameters
     from lightspeed_agentic.providers.models.anthropic import create_vertex_model
 
@@ -238,8 +380,8 @@ async def test_vertex_requests_preserve_api_version_and_explicit_paths(
             model = create_vertex_model(
                 ModelParameters(
                     model="claude-sonnet-4-6@20260217",
-                    project="test-project",
-                    region="us-east5",
+                    provider=VertexProviderParameters(project="test-project", region="us-east5"),
+                    credentials=VertexCredentialSource(Path("/unused/credentials.json")),
                     base_url=endpoint,
                 )
             )
@@ -253,14 +395,6 @@ async def test_vertex_requests_preserve_api_version_and_explicit_paths(
         "publishers/anthropic/models/claude-sonnet-4-6@20260217:rawPredict"
     )
     assert [str(request.url) for request in requests] == [expected_url, expected_url]
-
-
-def test_bedrock_model_rejects_missing_region() -> None:
-    from lightspeed_agentic.providers.model_router import ModelParameters
-    from lightspeed_agentic.providers.models.anthropic import create_bedrock_model
-
-    with pytest.raises(ValueError, match="Bedrock requires a region"):
-        create_bedrock_model(ModelParameters(model="test-model"))
 
 
 def test_module_import_does_not_load_optional_provider_sdks() -> None:

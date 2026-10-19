@@ -94,7 +94,7 @@ Cross-references: batch agent invocation → `run-api.md`. Env and build → `co
     | --- | --- | --- |
     | Vertex (existing) | `GOOGLE_APPLICATION_CREDENTIALS` service-account key | google-auth |
     | Azure Entra ID (OLS-3050) | `client_id` / `tenant_id` / `client_secret` | `azure.identity` `ClientSecretCredential` via `azure_ad_token_provider` (rule 29) |
-    | AWS Bedrock (OLS-4092) | `aws_access_key_id` / `aws_secret_access_key` + optional `role_arn` | `botocore` credential-provider chain: with `role_arn` it performs STS assume-role and refreshes the short-lived credentials (see `configuration.md` rule 9b). The Anthropic-on-Bedrock model path is unchanged. |
+    | AWS Bedrock (OLS-4092) | `aws_access_key_id` / `aws_secret_access_key` + optional `aws_session_token` / `role_arn` | With `role_arn`, `botocore`'s `AssumeRoleCredentialFetcher` and `DeferredRefreshableCredentials` perform STS assume-role and refresh; the cloud-credential helper supplies current credentials to Bedrock request signing (see `configuration.md` rule 9b). The Anthropic-on-Bedrock model path is unchanged. |
 
 ### Agentic Trace Profile
 
@@ -253,15 +253,15 @@ Implementation verification starts with existing `make test`, `make lint`, depen
 | ----------- | --------- |
 | `ProviderQueryOptions.*` | All option fields listed above (set by batch/run-agent, not raw HTTP). |
 | `ResolvedModelRoute` | Authoritative DeepAgents model, typed constructor/parameters, telemetry provider, and structured-output method. Resolved before provider creation. |
-| `GOOGLE_GENAI_USE_VERTEXAI` | Gemini: Vertex vs consumer API behavior and tool mix. Set internally by configuration mapping (see `configuration.md` rule 2), not by operator. |
+| `GOOGLE_GENAI_USE_VERTEXAI` | Not used by the migrated Vertex/Gemini route, which passes Vertex configuration and credentials directly to its model integration. |
 | `OPENAI_BASE_URL` | OpenAI-compatible API endpoint override. Set internally by configuration mapping, not by operator. |
 | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_VERSION` | Azure: `azure_endpoint` / `api_version` for `AsyncAzureOpenAI` (rule 29). Set internally by configuration mapping. |
 | `AZURE_OPENAI_API_KEY` | Azure API-key credential (API-key mode only). Populated from credentials secret envFrom. |
 | `/var/run/secrets/llm-credentials/{client_id,tenant_id,client_secret}` | Azure Entra ID service-principal files for `ClientSecretCredential` (Entra ID mode, rule 29). Mounted by operator. |
-| `GOOGLE_API_KEY`, `GEMINI_API_KEY` | Gemini credential and routing. Populated from credentials secret envFrom. |
-| `ANTHROPIC_API_KEY` | DeepAgents/Anthropic: direct API credential. Populated from credentials secret envFrom. |
-| `CLAUDE_CODE_USE_VERTEX` | Legacy compatibility flag set by configuration mapping; not a DeepAgents model-route selector. |
-| `CLAUDE_CODE_USE_BEDROCK` | Legacy compatibility flag set by configuration mapping; not a DeepAgents model-route selector. |
+| `GOOGLE_API_KEY`, `GEMINI_API_KEY` | Legacy Google GenAI credentials; not used to configure the migrated Vertex/Gemini route. |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | Direct Anthropic credentials resolved into typed route parameters; the API key is required, and the optional auth token supplies bearer authorization for compatible endpoints. |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | Bedrock static/source credentials resolved from environment values or mounted credential files. |
+| `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_BEDROCK` | Legacy flags may remain in the environment but are not set by configuration mapping and do not select a model route. |
 
 ## Constraints
 

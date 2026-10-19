@@ -1,8 +1,9 @@
-"""Configuration mapping: LIGHTSPEED_* generic vars → SDK-specific env vars.
+"""Resolve generic provider settings and credential references for startup.
 
-The operator sets generic LIGHTSPEED_* env vars on the sandbox pod.
-This module maps them to the SDK-specific env vars that each provider
-SDK reads internally. Called once at startup before provider construction.
+The operator sets LIGHTSPEED_* values on the sandbox pod. Migrated Anthropic,
+Vertex, and Bedrock routes keep these values in typed configuration rather than
+mutating process-global SDK settings. The legacy OpenAI/Azure adapters still
+translate settings to the environment variables their SDKs consume.
 """
 
 from __future__ import annotations
@@ -19,6 +20,62 @@ logger = logging.getLogger(__name__)
 LLM_CREDENTIALS_PATH = "/var/run/secrets/llm-credentials"
 DEFAULT_AZURE_API_VERSION = "2024-08-01-preview"
 DEFAULT_VERTEX_REGION = "global"
+
+
+@dataclasses.dataclass(frozen=True)
+class AnthropicCredentialSource:
+    """Resolved direct-Anthropic credentials, hidden from configuration reprs."""
+
+    api_key: str = dataclasses.field(default="", repr=False)
+    auth_token: str | None = dataclasses.field(default=None, repr=False)
+
+
+@dataclasses.dataclass(frozen=True)
+class VertexCredentialSource:
+    """Mounted ADC file reference; credential contents load during model construction."""
+
+    credentials_file: Path
+
+
+@dataclasses.dataclass(frozen=True)
+class BedrockCredentialSource:
+    """Resolved Bedrock credentials, hidden from configuration reprs."""
+
+    access_key_id: str = dataclasses.field(default="", repr=False)
+    secret_access_key: str = dataclasses.field(default="", repr=False)
+    session_token: str | None = dataclasses.field(default=None, repr=False)
+    role_arn: str | None = dataclasses.field(default=None, repr=False)
+
+
+type CredentialSource = AnthropicCredentialSource | VertexCredentialSource | BedrockCredentialSource
+
+
+@dataclasses.dataclass(frozen=True)
+class VertexProviderParameters:
+    """Project and region settings shared by Vertex model families."""
+
+    project: str | None
+    region: str
+
+
+@dataclasses.dataclass(frozen=True)
+class BedrockProviderParameters:
+    """Resolved Bedrock region."""
+
+    region: str
+
+
+type ProviderParameters = VertexProviderParameters | BedrockProviderParameters
+
+
+@dataclasses.dataclass(frozen=True)
+class ModelParameters:
+    """Resolved model settings and lazy credentials for one provider constructor."""
+
+    model: str
+    base_url: str | None = None
+    provider: ProviderParameters | None = None
+    credentials: CredentialSource | None = dataclasses.field(default=None, repr=False)
 
 
 def _llm_credentials_path() -> str:
@@ -41,8 +98,8 @@ class ResolvedModelFamily:
     )
     model: str | None = dataclasses.field(kw_only=True, default=None)
     base_url: str | None = None
-    project: str | None = None
-    region: str | None = None
+    provider: ProviderParameters | None = None
+    credentials: CredentialSource | None = dataclasses.field(default=None, repr=False)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -70,23 +127,22 @@ def _resolved_value(value: str | None, env_name: str) -> str | None:
     return value or os.environ.get(env_name, "").strip() or None
 
 
-def _resolve_vertex_region(region: str | None, *legacy_env_names: str) -> str:
-    """Resolve a Vertex region, defaulting to the global endpoint when unspecified."""
-    candidates = [region]
-    candidates.extend(os.environ.get(name, "").strip() for name in legacy_env_names)
-    return next((candidate for candidate in candidates if candidate), DEFAULT_VERTEX_REGION)
+def _resolve_vertex_region(region: str | None) -> str:
+    """Resolve the canonical Vertex region, defaulting to the global endpoint."""
+    return region or DEFAULT_VERTEX_REGION
 
 
 def _resolve_anthropic(model: str | None, url: str | None) -> ResolvedModelFamily:
-    _setenv_if_value("ANTHROPIC_MODEL", model)
-    _setenv_if_value("ANTHROPIC_BASE_URL", url)
     return ResolvedModelFamily(
         "anthropic",
         ("ANTHROPIC_API_KEY",),
-        # ANTHROPIC_AUTH_TOKEN is optional, used for vLLM bearer token auth
         hosting="anthropic",
-        model=_resolved_value(model, "ANTHROPIC_MODEL"),
-        base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None,
+        model=model,
+        base_url=url,
+        credentials=AnthropicCredentialSource(
+            api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip(),
+            auth_token=os.environ.get("ANTHROPIC_AUTH_TOKEN", "").strip() or None,
+        ),
     )
 
 
@@ -102,46 +158,32 @@ def _resolve_vertex(
 
     match model_provider:
         case "anthropic":
-            _setenv_if_value("ANTHROPIC_MODEL", model)
-            _setenv("CLAUDE_CODE_USE_VERTEX", "1")
-            _setenv_if_value("ANTHROPIC_VERTEX_PROJECT_ID", project)
-            resolved_region = _resolve_vertex_region(region, "CLOUD_ML_REGION")
-            _setenv("CLOUD_ML_REGION", resolved_region)
-            _setenv(
-                "GOOGLE_APPLICATION_CREDENTIALS",
-                f"{_llm_credentials_path()}/GOOGLE_APPLICATION_CREDENTIALS",
-            )
-            _setenv_if_value("ANTHROPIC_BASE_URL", url)
+            resolved_region = _resolve_vertex_region(region)
             return ResolvedModelFamily(
                 "anthropic",
-                ("GOOGLE_APPLICATION_CREDENTIALS",),
-                ("GOOGLE_APPLICATION_CREDENTIALS",),
+                (),
                 hosting="vertex",
-                model=_resolved_value(model, "ANTHROPIC_MODEL"),
-                base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None,
-                project=os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID", "").strip() or None,
-                region=resolved_region,
+                model=model,
+                base_url=url,
+                provider=VertexProviderParameters(project=project, region=resolved_region),
+                credentials=VertexCredentialSource(
+                    credentials_file=Path(_llm_credentials_path())
+                    / "GOOGLE_APPLICATION_CREDENTIALS"
+                ),
             )
         case "google":
-            _setenv_if_value("GEMINI_MODEL", model)
-            _setenv_if_value("GOOGLE_CLOUD_PROJECT", project)
-            resolved_region = _resolve_vertex_region(
-                region, "CLOUD_ML_REGION", "GOOGLE_CLOUD_LOCATION"
-            )
-            _setenv("GOOGLE_CLOUD_LOCATION", resolved_region)
-            _setenv(
-                "GOOGLE_APPLICATION_CREDENTIALS",
-                f"{_llm_credentials_path()}/GOOGLE_APPLICATION_CREDENTIALS",
-            )
+            resolved_region = _resolve_vertex_region(region)
             return ResolvedModelFamily(
                 "google",
-                ("GOOGLE_APPLICATION_CREDENTIALS",),
-                ("GOOGLE_APPLICATION_CREDENTIALS",),
+                (),
                 hosting="vertex",
-                model=_resolved_value(model, "GEMINI_MODEL"),
+                model=model,
                 base_url=url,
-                project=os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip() or None,
-                region=resolved_region,
+                provider=VertexProviderParameters(project=project, region=resolved_region),
+                credentials=VertexCredentialSource(
+                    credentials_file=Path(_llm_credentials_path())
+                    / "GOOGLE_APPLICATION_CREDENTIALS"
+                ),
             )
         case "openai":
             _setenv_if_value("OPENAI_MODEL", model)
@@ -277,27 +319,43 @@ def _resolve_azure(
     )
 
 
+def _resolve_bedrock_credential(env_name: str, file_name: str) -> str | None:
+    """Resolve one Bedrock credential from its environment or mounted file."""
+    value = os.environ.get(env_name, "").strip()
+    if value:
+        return value
+    return _read_credential_file(str(Path(_llm_credentials_path()) / file_name))
+
+
 def _resolve_bedrock(
     model: str | None,
     url: str | None,
     region: str | None,
 ) -> ResolvedModelFamily:
-    _setenv_if_value("ANTHROPIC_MODEL", model)
-    _setenv("CLAUDE_CODE_USE_BEDROCK", "1")
-    _setenv_if_value("AWS_REGION", region)
-    _setenv_if_value("ANTHROPIC_BASE_URL", url)
     return ResolvedModelFamily(
         "anthropic",
-        ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        (),
         hosting="bedrock",
-        model=_resolved_value(model, "ANTHROPIC_MODEL"),
-        base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None,
-        region=os.environ.get("AWS_REGION", "").strip() or None,
+        model=model,
+        base_url=url,
+        provider=BedrockProviderParameters(
+            region=region or os.environ.get("AWS_REGION", "").strip() or "us-east-1"
+        ),
+        credentials=BedrockCredentialSource(
+            access_key_id=_resolve_bedrock_credential("AWS_ACCESS_KEY_ID", "aws_access_key_id")
+            or "",
+            secret_access_key=_resolve_bedrock_credential(
+                "AWS_SECRET_ACCESS_KEY", "aws_secret_access_key"
+            )
+            or "",
+            session_token=_resolve_bedrock_credential("AWS_SESSION_TOKEN", "aws_session_token"),
+            role_arn=_resolve_bedrock_credential("role_arn", "role_arn"),
+        ),
     )
 
 
 def resolve_model_family() -> ResolvedModelFamily:
-    """Read LIGHTSPEED_* vars, map SDK env vars, and resolve model family and credentials."""
+    """Read LIGHTSPEED_* vars and resolve typed provider and credential settings."""
     provider = os.environ.get("LIGHTSPEED_PROVIDER", "").strip().lower() or "anthropic"
     model = os.environ.get("LIGHTSPEED_MODEL", "").strip() or None
     model_provider = os.environ.get("LIGHTSPEED_MODEL_PROVIDER", "").strip().lower() or None

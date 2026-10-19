@@ -286,12 +286,12 @@ pipeline will prefetch the new versions on the next PR.
 | `LIGHTSPEED_SKILLS_DIR` | Skills root mounted in the sandbox pod, default `/app/skills` |
 | `LIGHTSPEED_AGENTICRUN_UID` | AgenticRun UID on bridged OTLP log record attrs (templog); set by operator with OTEL endpoint |
 | `LIGHTSPEED_AGENTICRUN_STEP` | AgenticRun step → `agenticrun.phase` on bridged OTLP log records |
-| `ANTHROPIC_MODEL` | Legacy Anthropic model input when `LIGHTSPEED_MODEL` is unset |
-| `GEMINI_MODEL` | Google GenAI model fallback when `LIGHTSPEED_MODEL` is unset |
+| `ANTHROPIC_MODEL` | E2E harness input copied to `LIGHTSPEED_MODEL`; not a runtime fallback for DeepAgents routes |
+| `GEMINI_MODEL` | E2E harness input copied to `LIGHTSPEED_MODEL`; Vertex Gemini runtime requires `LIGHTSPEED_MODEL` |
 | `OPENAI_MODEL` | Legacy OpenAI model input when `LIGHTSPEED_MODEL` is unset |
 | `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint override |
-| `CLAUDE_CODE_USE_BEDROCK` | Legacy compatibility flag set by config; does not select the DeepAgents model route |
-| `CLAUDE_CODE_USE_VERTEX` | Legacy compatibility flag set by config; does not select the DeepAgents model route |
+| `CLAUDE_CODE_USE_BEDROCK` | Legacy E2E credential compatibility flag; not set by runtime config or used to select the DeepAgents model route |
+| `CLAUDE_CODE_USE_VERTEX` | Legacy E2E credential compatibility flag; not set by runtime config or used to select the DeepAgents model route |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Shared OTLP endpoint for traces and logs |
 | `SSL_CERT_FILE` | Combined system and operator-provided CA bundle |
 | `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` | Combined CA bundle used by gRPC |
@@ -303,7 +303,7 @@ pipeline will prefetch the new versions on the next PR.
 | `/var/run/secrets/lightspeed/tls/` | Shared read-only root for operator-provided CA files |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` (default) or `http/protobuf` |
 | `ANTHROPIC_VERTEX_PROJECT_ID` | Vertex project for Anthropic via Vertex |
-| `CLOUD_ML_REGION` | Anthropic Vertex region copied into model-route parameters (default `us-east5`) |
+| `CLOUD_ML_REGION` | E2E harness input copied to `LIGHTSPEED_PROVIDER_REGION`; runtime Vertex region defaults to `global` |
 
 Provider credentials such as `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
 `GEMINI_API_KEY`, and `OPENAI_API_KEY` are expected by the underlying SDKs or

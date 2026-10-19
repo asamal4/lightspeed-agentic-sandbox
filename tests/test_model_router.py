@@ -38,6 +38,7 @@ def _isolated_env(tmp_path: Path) -> Iterator[None]:
 
 
 def test_model_route_has_typed_construction_inputs_without_legacy_sdk() -> None:
+    from lightspeed_agentic.config import VertexProviderParameters
     from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
 
     route = ResolvedModelRoute(
@@ -45,7 +46,8 @@ def test_model_route_has_typed_construction_inputs_without_legacy_sdk() -> None:
         model="test-model",
         create_model=anthropic.create_vertex_model,
         model_parameters=ModelParameters(
-            model="test-model", project="test-project", region="us-east5"
+            model="test-model",
+            provider=VertexProviderParameters(project="test-project", region="us-east5"),
         ),
         telemetry_provider="gcp.vertex_ai",
         structured_output_method="json_schema",
@@ -53,7 +55,7 @@ def test_model_route_has_typed_construction_inputs_without_legacy_sdk() -> None:
 
     assert route.route == "vertex/anthropic"
     assert route.telemetry_provider == "gcp.vertex_ai"
-    assert route.model_parameters.project == "test-project"
+    assert route.model_parameters.provider.project == "test-project"
 
 
 @pytest.mark.parametrize(("provider", "family", "legacy_env", "adapter"), _ROUTES)
@@ -84,6 +86,12 @@ def test_route_preserves_legacy_dispatch_and_model_precedence(
         "legacy": "route-legacy",
     }[source]
 
+    if adapter == "deepagents" and source == "legacy":
+        # Migrated routes use only the generic model setting, not SDK model env vars.
+        with pytest.raises(ValueError, match="No model configured"):
+            resolve_model_route(explicit_model)
+        return
+
     sdk, route = resolve_model_route(explicit_model)
 
     if adapter == "deepagents":
@@ -101,7 +109,10 @@ def test_route_preserves_legacy_dispatch_and_model_precedence(
         assert sdk.name == adapter
         # Unmigrated callers retain the existing model-resolution path.
         assert resolve_router_model(sdk.name, explicit_model) == expected_model
-    assert os.environ[legacy_env] == ("route-legacy" if source == "legacy" else "canonical-model")
+    expected_env_model = (
+        "canonical-model" if adapter == "openai" and source != "legacy" else "route-legacy"
+    )
+    assert os.environ[legacy_env] == expected_env_model
 
 
 @pytest.mark.parametrize(
@@ -112,16 +123,16 @@ def test_route_preserves_legacy_dispatch_and_model_precedence(
             "vertex",
             "anthropic",
             "anthropic",
-            ("GOOGLE_APPLICATION_CREDENTIALS",),
-            ("GOOGLE_APPLICATION_CREDENTIALS",),
+            (),
+            (),
         ),
-        ("bedrock", None, "anthropic", ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), ()),
+        ("bedrock", None, "anthropic", (), ()),
         (
             "vertex",
             "google",
             "google",
-            ("GOOGLE_APPLICATION_CREDENTIALS",),
-            ("GOOGLE_APPLICATION_CREDENTIALS",),
+            (),
+            (),
         ),
         (
             "vertex",
@@ -229,7 +240,7 @@ def test_openai_routes_return_sdk_with_configured_model(
 
 
 @pytest.mark.parametrize(
-    ("provider", "constructor", "telemetry_provider", "method", "project", "region", "auth_token"),
+    ("provider", "constructor", "telemetry_provider", "method", "project", "region"),
     [
         (
             "anthropic",
@@ -238,7 +249,6 @@ def test_openai_routes_return_sdk_with_configured_model(
             "json_schema",
             None,
             None,
-            "test-bearer",
         ),
         (
             "vertex",
@@ -247,7 +257,6 @@ def test_openai_routes_return_sdk_with_configured_model(
             "json_schema",
             "operator-project",
             "us-east5",
-            None,
         ),
         (
             "bedrock",
@@ -256,7 +265,6 @@ def test_openai_routes_return_sdk_with_configured_model(
             "function_calling",
             None,
             "us-east5",
-            None,
         ),
     ],
 )
@@ -267,13 +275,16 @@ def test_anthropic_route_selects_constructor_and_typed_parameters(
     method: str,
     project: str | None,
     region: str | None,
-    auth_token: str | None,
+    tmp_path: Path,
 ) -> None:
-    from lightspeed_agentic.providers.model_router import (
-        ModelParameters,
-        ResolvedModelRoute,
-        resolve_model_route,
+    from lightspeed_agentic.config import (
+        AnthropicCredentialSource,
+        BedrockCredentialSource,
+        BedrockProviderParameters,
+        VertexCredentialSource,
+        VertexProviderParameters,
     )
+    from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
 
     os.environ.update(
         {
@@ -283,6 +294,7 @@ def test_anthropic_route_selects_constructor_and_typed_parameters(
             "LIGHTSPEED_PROVIDER_URL": "https://operator.example.test",
             "LIGHTSPEED_PROVIDER_PROJECT": "operator-project",
             "LIGHTSPEED_PROVIDER_REGION": "us-east5",
+            "ANTHROPIC_API_KEY": "test-api-key",
             "ANTHROPIC_AUTH_TOKEN": "test-bearer",
             # The operator route, not these stale flags, selects the constructor.
             "CLAUDE_CODE_USE_VERTEX": "1",
@@ -295,25 +307,37 @@ def test_anthropic_route_selects_constructor_and_typed_parameters(
     assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.create_model is constructor
-    assert route.model_parameters == ModelParameters(
-        model="exact-model-or-profile-id",
-        base_url="https://operator.example.test",
-        project=project,
-        region=region,
-        auth_token=auth_token,
-    )
+    parameters = route.model_parameters
+    assert parameters.model == "exact-model-or-profile-id"
+    assert parameters.base_url == "https://operator.example.test"
+    if provider == "anthropic":
+        assert parameters.provider is None
+        assert parameters.credentials == AnthropicCredentialSource(
+            api_key="test-api-key",
+            auth_token="test-bearer",  # noqa: S106 - Test credential value.
+        )
+    elif provider == "vertex":
+        assert parameters.provider == VertexProviderParameters(project=project, region=region)
+        assert parameters.credentials == VertexCredentialSource(
+            tmp_path / "GOOGLE_APPLICATION_CREDENTIALS"
+        )
+    else:
+        assert parameters.provider == BedrockProviderParameters(region=region)
+        assert isinstance(parameters.credentials, BedrockCredentialSource)
     assert route.telemetry_provider == telemetry_provider
     assert route.structured_output_method == method
     assert "test-bearer" not in repr(route)
-    assert "test-bearer" not in repr(route.model_parameters)
+    assert "test-bearer" not in repr(parameters)
 
 
-def test_vertex_google_route_selects_gemini_constructor_and_typed_parameters() -> None:
-    from lightspeed_agentic.providers.model_router import (
-        ModelParameters,
-        ResolvedModelRoute,
-        resolve_model_route,
+def test_vertex_google_route_selects_gemini_constructor_and_typed_parameters(
+    tmp_path: Path,
+) -> None:
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
     )
+    from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
     from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
 
     os.environ.update(
@@ -334,24 +358,28 @@ def test_vertex_google_route_selects_gemini_constructor_and_typed_parameters() -
     assert route.route == "vertex/google"
     assert route.model == "gemini-2.5-flash"
     assert route.create_model is create_vertex_gemini_model
-    assert route.model_parameters == ModelParameters(
-        model="gemini-2.5-flash",
-        base_url="https://vertex-proxy.example.test/custom",
-        project="test-project",
-        region="us-central1",
+    assert route.model_parameters.model == "gemini-2.5-flash"
+    assert route.model_parameters.base_url == "https://vertex-proxy.example.test/custom"
+    assert route.model_parameters.provider == VertexProviderParameters(
+        project="test-project", region="us-central1"
+    )
+    assert route.model_parameters.credentials == VertexCredentialSource(
+        tmp_path / "GOOGLE_APPLICATION_CREDENTIALS"
     )
     assert route.telemetry_provider == "gcp.vertex_ai"
     assert route.structured_output_method == "json_schema"
     assert route.structured_output_schema_mode == "raw_json_schema"
 
 
-def test_route_uses_resolved_anthropic_hosting_and_settings_not_current_environment() -> None:
-    from lightspeed_agentic.config import resolve_model_family
-    from lightspeed_agentic.providers.model_router import (
-        ModelParameters,
-        ResolvedModelRoute,
-        resolve_model_route,
+def test_route_uses_resolved_anthropic_hosting_and_settings_not_current_environment(
+    tmp_path: Path,
+) -> None:
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+        resolve_model_family,
     )
+    from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
 
     os.environ.update(
         {
@@ -381,11 +409,13 @@ def test_route_uses_resolved_anthropic_hosting_and_settings_not_current_environm
     assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.create_model is anthropic.create_vertex_model
-    assert route.model_parameters == ModelParameters(
-        model="snapshot-model",
-        base_url="https://resolved-vertex.example.test",
-        project="resolved-project",
-        region="us-west1",
+    assert route.model_parameters.model == "snapshot-model"
+    assert route.model_parameters.base_url == "https://resolved-vertex.example.test"
+    assert route.model_parameters.provider == VertexProviderParameters(
+        project="resolved-project", region="us-west1"
+    )
+    assert route.model_parameters.credentials == VertexCredentialSource(
+        tmp_path / "GOOGLE_APPLICATION_CREDENTIALS"
     )
 
 
@@ -403,7 +433,7 @@ def test_direct_route_selects_endpoint_specific_shaping(base_url: str | None, me
 
     os.environ["LIGHTSPEED_MODEL"] = "configured-model"
     if base_url:
-        os.environ["ANTHROPIC_BASE_URL"] = base_url
+        os.environ["LIGHTSPEED_PROVIDER_URL"] = base_url
 
     sdk, route = resolve_model_route()
 
@@ -416,16 +446,16 @@ def test_direct_route_selects_endpoint_specific_shaping(base_url: str | None, me
 
 @pytest.mark.parametrize(
     ("provider", "project", "region"),
-    [("vertex", "", "global"), ("bedrock", None, "us-east-1")],
+    [("vertex", None, "global"), ("bedrock", None, "us-east-1")],
 )
 def test_cloud_anthropic_routes_preserve_region_defaults(
     provider: str, project: str | None, region: str
 ) -> None:
-    from lightspeed_agentic.providers.model_router import (
-        ModelParameters,
-        ResolvedModelRoute,
-        resolve_model_route,
+    from lightspeed_agentic.config import (
+        BedrockProviderParameters,
+        VertexProviderParameters,
     )
+    from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
 
     os.environ["LIGHTSPEED_PROVIDER"] = provider
     if provider == "vertex":
@@ -436,45 +466,139 @@ def test_cloud_anthropic_routes_preserve_region_defaults(
 
     assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
-    assert route.model_parameters == ModelParameters(
-        model="configured-model", project=project, region=region
+    expected_provider = (
+        VertexProviderParameters(project=project, region=region)
+        if provider == "vertex"
+        else BedrockProviderParameters(region=region)
     )
+    assert route.model_parameters.provider == expected_provider
 
 
-def test_vertex_route_preserves_legacy_settings_and_file_readiness(tmp_path: Path) -> None:
-    from lightspeed_agentic.providers.model_router import (
-        ModelParameters,
-        ResolvedModelRoute,
-        resolve_model_route,
+def test_vertex_route_uses_typed_settings_and_file_readiness(tmp_path: Path) -> None:
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+        resolve_model_family,
     )
+    from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
 
+    credential_file = tmp_path / "GOOGLE_APPLICATION_CREDENTIALS"
+    credential_file.write_text("test-credentials", encoding="utf-8")
     os.environ.update(
         {
             "LIGHTSPEED_PROVIDER": "vertex",
             "LIGHTSPEED_MODEL_PROVIDER": "anthropic",
-            "ANTHROPIC_MODEL": "legacy-model",
-            "ANTHROPIC_VERTEX_PROJECT_ID": "legacy-project",
-            "CLOUD_ML_REGION": "global",
-            "ANTHROPIC_BASE_URL": "https://legacy.example.test",
+            "LIGHTSPEED_MODEL": "configured-model",
+            "LIGHTSPEED_PROVIDER_PROJECT": "configured-project",
+            "LIGHTSPEED_PROVIDER_REGION": "us-east5",
+            "LIGHTSPEED_PROVIDER_URL": "https://vertex.example.test",
+            "LIGHTSPEED_LLM_CREDENTIALS_PATH": str(tmp_path),
+            "ANTHROPIC_MODEL": "ignored-legacy-model",
+            "ANTHROPIC_VERTEX_PROJECT_ID": "ignored-legacy-project",
+            "CLOUD_ML_REGION": "ignored-legacy-region",
+            "ANTHROPIC_BASE_URL": "https://ignored.example.test",
         }
     )
-    sdk, route = resolve_model_route()
+    env_before = dict(os.environ)
+    family = resolve_model_family()
+    sdk, route = resolve_model_route(model_family=family)
 
     assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
-    assert route.model_parameters == ModelParameters(
-        model="legacy-model",
-        project="legacy-project",
-        region="global",
-        base_url="https://legacy.example.test",
+    assert route.model_parameters.model == "configured-model"
+    assert route.model_parameters.provider == VertexProviderParameters(
+        project="configured-project", region="us-east5"
     )
-    assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == str(
-        tmp_path / "GOOGLE_APPLICATION_CREDENTIALS"
+    assert route.model_parameters.base_url == "https://vertex.example.test"
+    assert route.model_parameters.credentials == VertexCredentialSource(credential_file)
+    assert dict(os.environ) == env_before
+    ready, checks = run_readiness_checks(family, route)
+    assert ready is True
+    assert checks == {
+        "provider_env": "ok",
+        "provider_credentials": "ok",
+        "model_route": "ok",
+    }
+
+
+def test_model_parameters_carry_resolved_anthropic_credentials_without_repr_leaks() -> None:
+    from lightspeed_agentic.config import AnthropicCredentialSource
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    os.environ.update(
+        {
+            "LIGHTSPEED_PROVIDER": "anthropic",
+            "LIGHTSPEED_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_API_KEY": "do-not-copy-this-api-key",
+            "ANTHROPIC_AUTH_TOKEN": "do-not-copy-this-token",
+        }
     )
-    credential_envs = ("GOOGLE_APPLICATION_CREDENTIALS",)
-    assert check_provider_env(credential_envs, credential_envs) != "ok"
-    (tmp_path / "GOOGLE_APPLICATION_CREDENTIALS").write_text("test-credentials")
-    assert check_provider_env(credential_envs, credential_envs) == "ok"
+
+    _sdk, route = resolve_model_route()
+
+    assert route is not None
+    assert route.model_parameters.credentials == AnthropicCredentialSource(
+        api_key="do-not-copy-this-api-key",
+        auth_token="do-not-copy-this-token",  # noqa: S106 - Test credential value.
+    )
+    assert "do-not-copy-this-api-key" not in repr(route)
+    assert "do-not-copy-this-token" not in repr(route)
+    assert route.model_parameters.provider is None
+
+
+def test_vertex_route_carries_provider_settings_and_unparsed_credential_file(
+    tmp_path: Path,
+) -> None:
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    credential_file = tmp_path / "GOOGLE_APPLICATION_CREDENTIALS"
+    credential_file.write_text("not parsed during routing", encoding="utf-8")
+    os.environ.update(
+        {
+            "LIGHTSPEED_PROVIDER": "vertex",
+            "LIGHTSPEED_MODEL_PROVIDER": "google",
+            "LIGHTSPEED_MODEL": "gemini-2.5-flash",
+            "LIGHTSPEED_PROVIDER_PROJECT": "test-project",
+            "LIGHTSPEED_PROVIDER_REGION": "us-central1",
+            "LIGHTSPEED_LLM_CREDENTIALS_PATH": str(tmp_path),
+        }
+    )
+
+    _sdk, route = resolve_model_route()
+
+    assert route is not None
+    assert route.model_parameters.provider == VertexProviderParameters(
+        project="test-project", region="us-central1"
+    )
+    assert route.model_parameters.credentials == VertexCredentialSource(
+        credentials_file=credential_file
+    )
+
+
+def test_bedrock_route_carries_bedrock_provider_and_credential_settings() -> None:
+    from lightspeed_agentic.config import (
+        BedrockCredentialSource,
+        BedrockProviderParameters,
+    )
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    os.environ.update(
+        {
+            "LIGHTSPEED_PROVIDER": "bedrock",
+            "LIGHTSPEED_MODEL": "claude-sonnet-4-6",
+            "LIGHTSPEED_PROVIDER_REGION": "us-east-1",
+        }
+    )
+
+    _sdk, route = resolve_model_route()
+
+    assert route is not None
+    assert route.model_parameters.provider == BedrockProviderParameters(region="us-east-1")
+    assert isinstance(route.model_parameters.credentials, BedrockCredentialSource)
 
 
 @pytest.mark.parametrize("provider", ["anthropic", "bedrock"])

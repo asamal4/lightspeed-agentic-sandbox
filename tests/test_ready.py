@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from lightspeed_agentic.config import ResolvedSDK
+from lightspeed_agentic.config import ResolvedModelFamily, ResolvedSDK
 from lightspeed_agentic.readiness import (
     check_provider_env,
     read_first_mounted_secret_in_dir,
@@ -174,6 +174,65 @@ def test_run_readiness_checks_provider_env_fails(monkeypatch: pytest.MonkeyPatch
     ok, checks = run_readiness_checks(_ANTHROPIC_DIRECT)
     assert ok is False
     assert checks["provider_env"].startswith("error: ")
+
+
+def test_run_readiness_checks_rejects_vertex_route_without_project() -> None:
+    from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
+    from lightspeed_agentic.providers.models.anthropic import create_vertex_model
+
+    family = ResolvedModelFamily("anthropic", (), hosting="vertex")
+    route = ResolvedModelRoute(
+        route="vertex/anthropic",
+        model="test-model",
+        create_model=create_vertex_model,
+        model_parameters=ModelParameters(model="test-model", project="", region="us-east5"),
+        telemetry_provider="gcp.vertex_ai",
+        structured_output_method="json_schema",
+    )
+
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is False
+    assert checks == {
+        "provider_env": "ok",
+        "model_route": "error: missing project for vertex/anthropic",
+    }
+
+
+def test_run_readiness_checks_rejects_bedrock_route_without_region() -> None:
+    from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
+    from lightspeed_agentic.providers.models.anthropic import create_bedrock_model
+
+    family = ResolvedModelFamily("anthropic", (), hosting="bedrock")
+    route = ResolvedModelRoute(
+        route="bedrock/anthropic",
+        model="test-model",
+        create_model=create_bedrock_model,
+        model_parameters=ModelParameters(model="test-model"),
+        telemetry_provider="aws.bedrock",
+        structured_output_method="function_calling",
+    )
+
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is False
+    assert checks == {
+        "provider_env": "ok",
+        "model_route": "error: missing region for bedrock/anthropic",
+    }
+
+
+def test_run_readiness_checks_accepts_default_bedrock_region() -> None:
+    from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
+
+    family = ResolvedModelFamily("anthropic", (), hosting="bedrock")
+    _, route = resolve_model_route(model_family=family)
+
+    assert isinstance(route, ResolvedModelRoute)
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is True
+    assert checks == {"provider_env": "ok", "model_route": "ok"}
 
 
 def test_read_mounted_secret_returns_content(tmp_path: Path) -> None:

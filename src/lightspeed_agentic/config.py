@@ -12,7 +12,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +27,26 @@ def _llm_credentials_path() -> str:
 
 
 @dataclasses.dataclass(frozen=True)
+class ResolvedModelFamily:
+    """Resolved model family with hosting, connection, and readiness configuration."""
+
+    name: Literal["anthropic", "google", "openai"]
+    expected_envs: tuple[str, ...]
+    credential_file_envs: tuple[str, ...] = ()
+    azure_auth_mode: str | None = None
+    azure_credentials: dict[str, str] | None = None
+    hosting: Literal["anthropic", "vertex", "bedrock", "openai", "azure"] = dataclasses.field(
+        kw_only=True
+    )
+    model: str | None = dataclasses.field(kw_only=True, default=None)
+    base_url: str | None = None
+    project: str | None = None
+    region: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class ResolvedSDK:
-    """Result of resolving LIGHTSPEED_* env vars to an SDK backend."""
+    """Legacy adapter and readiness configuration retained during migration."""
 
     name: str  # "deepagents", "gemini", "openai"
     expected_envs: tuple[str, ...]  # credential env vars expected from envFrom
@@ -46,13 +64,21 @@ def _setenv_if_value(key: str, value: str | None) -> None:
         _setenv(key, value)
 
 
-def _resolve_anthropic(model: str | None, url: str | None) -> ResolvedSDK:
+def _resolved_value(value: str | None, env_name: str) -> str | None:
+    """Return the explicit value or the corresponding legacy SDK environment value."""
+    return value or os.environ.get(env_name, "").strip() or None
+
+
+def _resolve_anthropic(model: str | None, url: str | None) -> ResolvedModelFamily:
     _setenv_if_value("ANTHROPIC_MODEL", model)
     _setenv_if_value("ANTHROPIC_BASE_URL", url)
-    return ResolvedSDK(
-        "deepagents",
+    return ResolvedModelFamily(
+        "anthropic",
         ("ANTHROPIC_API_KEY",),
         # ANTHROPIC_AUTH_TOKEN is optional, used for vLLM bearer token auth
+        hosting="anthropic",
+        model=_resolved_value(model, "ANTHROPIC_MODEL"),
+        base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None,
     )
 
 
@@ -62,7 +88,7 @@ def _resolve_vertex(
     url: str | None,
     project: str | None,
     region: str | None,
-) -> ResolvedSDK:
+) -> ResolvedModelFamily:
     if not model_provider:
         raise ValueError("LIGHTSPEED_MODEL_PROVIDER is required when LIGHTSPEED_PROVIDER=vertex")
 
@@ -77,10 +103,15 @@ def _resolve_vertex(
                 f"{_llm_credentials_path()}/GOOGLE_APPLICATION_CREDENTIALS",
             )
             _setenv_if_value("ANTHROPIC_BASE_URL", url)
-            return ResolvedSDK(
-                "deepagents",
+            return ResolvedModelFamily(
+                "anthropic",
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
+                hosting="vertex",
+                model=_resolved_value(model, "ANTHROPIC_MODEL"),
+                base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None,
+                project=os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID", "").strip() or None,
+                region=os.environ.get("CLOUD_ML_REGION", "").strip() or None,
             )
         case "google":
             _setenv_if_value("GEMINI_MODEL", model)
@@ -91,10 +122,14 @@ def _resolve_vertex(
                 "GOOGLE_APPLICATION_CREDENTIALS",
                 f"{_llm_credentials_path()}/GOOGLE_APPLICATION_CREDENTIALS",
             )
-            return ResolvedSDK(
-                "gemini",
+            return ResolvedModelFamily(
+                "google",
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
+                hosting="vertex",
+                model=_resolved_value(model, "GEMINI_MODEL"),
+                project=os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip() or None,
+                region=os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip() or None,
             )
         case "openai":
             _setenv_if_value("OPENAI_MODEL", model)
@@ -103,10 +138,13 @@ def _resolve_vertex(
                 "GOOGLE_APPLICATION_CREDENTIALS",
                 f"{_llm_credentials_path()}/GOOGLE_APPLICATION_CREDENTIALS",
             )
-            return ResolvedSDK(
+            return ResolvedModelFamily(
                 "openai",
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
+                hosting="vertex",
+                model=_resolved_value(model, "OPENAI_MODEL"),
+                base_url=os.environ.get("OPENAI_BASE_URL", "").strip() or None,
             )
         case _:
             raise ValueError(
@@ -115,12 +153,15 @@ def _resolve_vertex(
             )
 
 
-def _resolve_openai(model: str | None, url: str | None) -> ResolvedSDK:
+def _resolve_openai(model: str | None, url: str | None) -> ResolvedModelFamily:
     _setenv_if_value("OPENAI_MODEL", model)
     _setenv_if_value("OPENAI_BASE_URL", url)
-    return ResolvedSDK(
+    return ResolvedModelFamily(
         "openai",
         ("OPENAI_API_KEY",),
+        hosting="openai",
+        model=_resolved_value(model, "OPENAI_MODEL"),
+        base_url=os.environ.get("OPENAI_BASE_URL", "").strip() or None,
     )
 
 
@@ -163,7 +204,7 @@ def _resolve_azure(
     model: str | None,
     url: str | None,
     api_version: str | None,
-) -> ResolvedSDK:
+) -> ResolvedModelFamily:
     _setenv_if_value("OPENAI_MODEL", model)
     _setenv_if_value("AZURE_OPENAI_ENDPOINT", url)
     _setenv("AZURE_OPENAI_API_VERSION", api_version or DEFAULT_AZURE_API_VERSION)
@@ -176,10 +217,13 @@ def _resolve_azure(
     if client_id and tenant_id and client_secret:
         # Entra ID mode — do NOT set AZURE_OPENAI_API_KEY
         logger.info("Azure credential resolution: Entra ID (service principal)")
-        return ResolvedSDK(
+        return ResolvedModelFamily(
             "openai",
             (),  # no env-based credentials needed
             azure_auth_mode="entra_id",
+            hosting="azure",
+            model=_resolved_value(model, "OPENAI_MODEL"),
+            base_url=os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip() or None,
             azure_credentials={
                 "client_id": client_id,
                 "tenant_id": tenant_id,
@@ -192,19 +236,25 @@ def _resolve_azure(
     if api_key_file:
         _setenv("AZURE_OPENAI_API_KEY", api_key_file)
         logger.info("Azure credential resolution: API key (from file)")
-        return ResolvedSDK(
+        return ResolvedModelFamily(
             "openai",
             ("AZURE_OPENAI_API_KEY",),
             azure_auth_mode="api_key",
+            hosting="azure",
+            model=_resolved_value(model, "OPENAI_MODEL"),
+            base_url=os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip() or None,
         )
 
     api_key_env = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
     if api_key_env:
         logger.info("Azure credential resolution: API key (from env)")
-        return ResolvedSDK(
+        return ResolvedModelFamily(
             "openai",
             ("AZURE_OPENAI_API_KEY",),
             azure_auth_mode="api_key",
+            hosting="azure",
+            model=_resolved_value(model, "OPENAI_MODEL"),
+            base_url=os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip() or None,
         )
 
     raise ValueError(
@@ -219,19 +269,23 @@ def _resolve_bedrock(
     model: str | None,
     url: str | None,
     region: str | None,
-) -> ResolvedSDK:
+) -> ResolvedModelFamily:
     _setenv_if_value("ANTHROPIC_MODEL", model)
     _setenv("CLAUDE_CODE_USE_BEDROCK", "1")
     _setenv_if_value("AWS_REGION", region)
     _setenv_if_value("ANTHROPIC_BASE_URL", url)
-    return ResolvedSDK(
-        "deepagents",
+    return ResolvedModelFamily(
+        "anthropic",
         ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        hosting="bedrock",
+        model=_resolved_value(model, "ANTHROPIC_MODEL"),
+        base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None,
+        region=os.environ.get("AWS_REGION", "").strip() or None,
     )
 
 
-def resolve_sdk() -> ResolvedSDK:
-    """Read LIGHTSPEED_* env vars, set SDK-specific env vars, return resolved SDK."""
+def resolve_model_family() -> ResolvedModelFamily:
+    """Read LIGHTSPEED_* vars, map SDK env vars, and resolve model family and credentials."""
     provider = os.environ.get("LIGHTSPEED_PROVIDER", "").strip().lower() or "anthropic"
     model = os.environ.get("LIGHTSPEED_MODEL", "").strip() or None
     model_provider = os.environ.get("LIGHTSPEED_MODEL_PROVIDER", "").strip().lower() or None
@@ -242,23 +296,23 @@ def resolve_sdk() -> ResolvedSDK:
 
     match provider:
         case "anthropic":
-            sdk = _resolve_anthropic(model, url)
+            model_family = _resolve_anthropic(model, url)
         case "vertex":
-            sdk = _resolve_vertex(model_provider, model, url, project, region)
+            model_family = _resolve_vertex(model_provider, model, url, project, region)
         case "openai":
-            sdk = _resolve_openai(model, url)
+            model_family = _resolve_openai(model, url)
         case "azure":
-            sdk = _resolve_azure(model, url, api_version)
+            model_family = _resolve_azure(model, url, api_version)
         case "bedrock":
-            sdk = _resolve_bedrock(model, url, region)
+            model_family = _resolve_bedrock(model, url, region)
         case _:
             raise ValueError(
                 f"Unknown provider: {provider!r}. "
                 "Supported: anthropic, vertex, openai, azure, bedrock"
             )
 
-    logger.info("Resolved LIGHTSPEED_PROVIDER=%s → SDK=%s", provider, sdk.name)
-    return sdk
+    logger.info("Resolved LIGHTSPEED_PROVIDER=%s → model family=%s", provider, model_family.name)
+    return model_family
 
 
 def parse_tool_output_inspection_enabled() -> bool:

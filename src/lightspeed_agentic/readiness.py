@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from lightspeed_agentic.config import ResolvedSDK
+from lightspeed_agentic.config import ResolvedModelFamily, ResolvedSDK
+
+if TYPE_CHECKING:
+    from lightspeed_agentic.providers.model_router import ResolvedModelRoute
 
 
 def read_mounted_secret(path: Path) -> str | None:
@@ -58,8 +62,29 @@ def check_provider_env(
     return "ok"
 
 
-def run_readiness_checks(sdk: ResolvedSDK) -> tuple[bool, dict[str, str]]:
+def _check_model_route(route: ResolvedModelRoute) -> str:
+    """Validate required connection settings for a resolved model route."""
+    parameters = route.model_parameters
+    match route.route:
+        case "vertex/anthropic":
+            required = {"project": parameters.project, "region": parameters.region}
+        case "bedrock/anthropic":
+            required = {"region": parameters.region}
+        case _:
+            return "ok"
+
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        return f"error: missing {', '.join(missing)} for {route.route}"
+    return "ok"
+
+
+def run_readiness_checks(
+    sdk: ResolvedSDK | ResolvedModelFamily,
+    model_route: ResolvedModelRoute | None = None,
+) -> tuple[bool, dict[str, str]]:
     """Return overall readiness and per-check status strings."""
-    status = check_provider_env(sdk.expected_envs, sdk.credential_file_envs)
-    checks = {"provider_env": status}
-    return status == "ok", checks
+    checks = {"provider_env": check_provider_env(sdk.expected_envs, sdk.credential_file_envs)}
+    if model_route is not None:
+        checks["model_route"] = _check_model_route(model_route)
+    return all(status == "ok" for status in checks.values()), checks

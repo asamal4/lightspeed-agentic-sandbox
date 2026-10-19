@@ -229,7 +229,10 @@ def _provider_extra_env(provider_name: str) -> dict[str, str]:
             url = os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip()
             if url:
                 extra["LIGHTSPEED_PROVIDER_URL"] = url
-        api_version = os.environ.get("LIGHTSPEED_PROVIDER_API_VERSION", "").strip()
+        api_version = (
+            os.environ.get("LIGHTSPEED_PROVIDER_API_VERSION", "").strip()
+            or os.environ.get("AZURE_OPENAI_API_VERSION", "").strip()
+        )
         if api_version:
             extra["LIGHTSPEED_PROVIDER_API_VERSION"] = api_version
     if provider_name in (PROVIDER_GEMINI_VERTEX_ADK, PROVIDER_ANTHROPIC_VERTEX_DEEPAGENTS):

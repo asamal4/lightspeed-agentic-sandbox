@@ -82,15 +82,17 @@ export E2E_NAMESPACE
 PROVIDERS=(anthropic-vertex-deepagents anthropic-bedrock-deepagents gemini-vertex-adk openai-agents anthropic-deepagents azure-openai-agents)
 
 source_e2e_config() {
-    local anthropic bedrock gemini openai azure
-    read -r anthropic bedrock gemini openai azure < <(
-        env -i bash -c "set -a; source \"${CONFIG_ENV}\"; set +a; printf '%s %s %s %s %s\n' \"\$ANTHROPIC_MODEL\" \"\$ANTHROPIC_BEDROCK_MODEL\" \"\$GEMINI_MODEL\" \"\$OPENAI_MODEL\" \"\$AZURE_OPENAI_MODEL\""
+    local anthropic bedrock gemini openai azure azure_endpoint azure_api_version
+    read -r anthropic bedrock gemini openai azure azure_endpoint azure_api_version < <(
+        env -i bash -c "set -a; source \"${CONFIG_ENV}\"; set +a; printf '%s %s %s %s %s %s %s\n' \"\$ANTHROPIC_MODEL\" \"\$ANTHROPIC_BEDROCK_MODEL\" \"\$GEMINI_MODEL\" \"\$OPENAI_MODEL\" \"\$AZURE_OPENAI_MODEL\" \"\$AZURE_OPENAI_ENDPOINT\" \"\$AZURE_OPENAI_API_VERSION\""
     )
     export ANTHROPIC_MODEL="${anthropic}"
     export ANTHROPIC_BEDROCK_MODEL="${bedrock}"
     export GEMINI_MODEL="${gemini}"
     export OPENAI_MODEL="${openai}"
     export AZURE_OPENAI_MODEL="${azure}"
+    export AZURE_OPENAI_ENDPOINT="${azure_endpoint}"
+    export AZURE_OPENAI_API_VERSION="${azure_api_version}"
 }
 
 apply_model_override() {

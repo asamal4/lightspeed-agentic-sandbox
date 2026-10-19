@@ -101,24 +101,24 @@ case "${PROVIDER}" in
         echo "  Mount azure-openai secret with key 'token' (API key) or keys 'client_id', 'client_secret', 'tenant_id' (Entra ID)" >&2
         exit 1
     fi
+    # Read endpoint/model/api_version from secret files when present (azure-openai secret),
+    # otherwise fall back to env vars or the hardcoded defaults for azureopenai-apitoken
+    # and azureopenai-entra-id secrets which contain only auth credentials.
     if [ -z "${AZURE_OPENAI_ENDPOINT:-}" ] && [ -f "${CRED_DIR}/endpoint" ]; then
         export AZURE_OPENAI_ENDPOINT
         AZURE_OPENAI_ENDPOINT="$(tr -d '[:space:]' < "${CRED_DIR}/endpoint")"
     fi
-    if [ -z "${AZURE_OPENAI_ENDPOINT:-}" ]; then
-        echo "error: AZURE_OPENAI_ENDPOINT must be set for azure-openai-agents" >&2
-        echo "  Set the env var or add key 'endpoint' to the credential secret" >&2
-        echo "  (e.g. https://my-resource.openai.azure.com/)" >&2
-        exit 1
-    fi
+    export AZURE_OPENAI_ENDPOINT="${AZURE_OPENAI_ENDPOINT:-https://ols-test.openai.azure.com/}"
     if [ -z "${AZURE_OPENAI_MODEL:-}" ] && [ -f "${CRED_DIR}/model" ]; then
         export AZURE_OPENAI_MODEL
         AZURE_OPENAI_MODEL="$(tr -d '[:space:]' < "${CRED_DIR}/model")"
     fi
+    export AZURE_OPENAI_MODEL="${AZURE_OPENAI_MODEL:-gpt-4o}"
     if [ -z "${LIGHTSPEED_PROVIDER_API_VERSION:-}" ] && [ -f "${CRED_DIR}/api_version" ]; then
         export LIGHTSPEED_PROVIDER_API_VERSION
         LIGHTSPEED_PROVIDER_API_VERSION="$(tr -d '[:space:]' < "${CRED_DIR}/api_version")"
     fi
+    export LIGHTSPEED_PROVIDER_API_VERSION="${LIGHTSPEED_PROVIDER_API_VERSION:-2025-03-01-preview}"
     export LIGHTSPEED_PROVIDER_URL="${AZURE_OPENAI_ENDPOINT}"
     ;;
   *)

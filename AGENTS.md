@@ -1,7 +1,8 @@
 # Lightspeed Agentic Sandbox
 
 Multi-provider agentic sandbox for OpenShift Lightspeed. This repo runs as a
-one-shot batch process plus provider adapters for DeepAgents (Anthropic), Gemini, and OpenAI.
+one-shot batch process with a DeepAgents harness for Anthropic and Vertex Gemini,
+plus the legacy OpenAI provider adapter.
 When editing it, optimize for thin provider wrappers, consistent event mapping,
 and tests that stay offline unless you are intentionally running live cluster BDD.
 
@@ -133,19 +134,20 @@ src/lightspeed_agentic/
 │   └── status.py         # Status assembly (conditions, failureReason)
 ├── providers/
 │   ├── deepagents.py     # Route-driven DeepAgents adapter
-│   ├── gemini.py         # Legacy google-adk adapter
 │   ├── openai.py         # Legacy openai-agents adapter
-│   ├── model_router.py   # Typed model routes/inputs; legacy SDK configuration for unmigrated families
+│   ├── model_router.py   # Typed DeepAgents routes; legacy SDK configuration for OpenAI
 │   └── models/
-│       └── anthropic.py  # Explicit direct, Bedrock, and Vertex model constructors
+│       ├── anthropic.py  # Explicit direct, Bedrock, and Vertex model constructors
+│       └── gemini.py     # Vertex Gemini model constructor
 ```
 
-| Feature | DeepAgents (`deepagents`) | Gemini (`google-adk`) | OpenAI (`openai-agents`) |
-| --- | --- | --- | --- |
-| Tools | `LocalShellBackend` + `/skills/` `FilesystemBackend` route + MCP tools | Native `ExecuteBashTool` plus built-in web tools | Native `SandboxAgent` shell/filesystem/skills |
-| Skills | `/skills/` virtual route passed to `create_deep_agent()` when skills exist | Native `SkillToolset` | Native `Skills` capability |
-| Structured output | Tool-free second pass without thinking; method from the model route | Native response schema path | `output_type` wrapper |
-| Streaming | `astream(stream_mode="messages")` | `StreamingMode.SSE` | `Runner.run_streamed()` |
+| Feature | DeepAgents (Anthropic and Vertex Gemini) | OpenAI (`openai-agents`) |
+| --- | --- | --- |
+| Models | Anthropic direct, Bedrock, and Vertex; Gemini on Vertex | OpenAI and Azure OpenAI |
+| Tools | `LocalShellBackend` + `/skills/` `FilesystemBackend` route + MCP tools | Native `SandboxAgent` shell/filesystem/skills |
+| Skills | `/skills/` virtual route passed to `create_deep_agent()` when skills exist | Native `Skills` capability |
+| Structured output | Tool-free second pass without thinking; method from the model route | `output_type` wrapper |
+| Streaming | `astream(stream_mode="messages")` | `Runner.run_streamed()` |
 
 Keep provider adapters thin. The SDK should own tool execution and skill
 discovery; `tools.py` holds the shared allowlist constant only. The SKILL.md
@@ -163,9 +165,9 @@ for the route, artifact storage, and execution limits.
   These SDKs are optional extras, so top-level imports must not break the base
   package import path.
 - Batch resolves the model family once and reuses it for routing and readiness.
-  Inject `ResolvedModelRoute` into DeepAgents; hosting selection and model
-  construction belong in `model_router.py` and `models/anthropic.py`, not the adapter.
-  Gemini/OpenAI remain on their legacy adapters until their model integrations migrate.
+  Inject `ResolvedModelRoute` into DeepAgents for Anthropic and Vertex Gemini;
+  hosting selection and model construction belong in `model_router.py` and
+  `providers/models/`, not the adapter. OpenAI remains on its legacy adapter.
 - `types.py` event objects are frozen dataclasses. New event types should follow
   the same pattern and stay simple to serialize/log.
 - Providers yield async event streams; `run_agent_query()` consumes async
@@ -284,9 +286,9 @@ pipeline will prefetch the new versions on the next PR.
 | `LIGHTSPEED_SKILLS_DIR` | Skills root mounted in the sandbox pod, default `/app/skills` |
 | `LIGHTSPEED_AGENTICRUN_UID` | AgenticRun UID on bridged OTLP log record attrs (templog); set by operator with OTEL endpoint |
 | `LIGHTSPEED_AGENTICRUN_STEP` | AgenticRun step → `agenticrun.phase` on bridged OTLP log records |
-| `ANTHROPIC_MODEL` | Default Anthropic model for query routes |
-| `GEMINI_MODEL` | Default Gemini model for query routes |
-| `OPENAI_MODEL` | Default OpenAI model for query routes |
+| `ANTHROPIC_MODEL` | Legacy Anthropic model input when `LIGHTSPEED_MODEL` is unset |
+| `GEMINI_MODEL` | Google GenAI model fallback when `LIGHTSPEED_MODEL` is unset |
+| `OPENAI_MODEL` | Legacy OpenAI model input when `LIGHTSPEED_MODEL` is unset |
 | `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint override |
 | `CLAUDE_CODE_USE_BEDROCK` | Legacy compatibility flag set by config; does not select the DeepAgents model route |
 | `CLAUDE_CODE_USE_VERTEX` | Legacy compatibility flag set by config; does not select the DeepAgents model route |

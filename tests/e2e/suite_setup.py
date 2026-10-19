@@ -212,11 +212,20 @@ def _provider_extra_env(provider_name: str) -> dict[str, str]:
         project = os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
         if project:
             extra["LIGHTSPEED_PROVIDER_PROJECT"] = project
+        region = (
+            os.environ.get("CLOUD_ML_REGION", "").strip()
+            or os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip()
+        )
+        if region:
+            extra["LIGHTSPEED_PROVIDER_REGION"] = region
     elif provider_name == PROVIDER_ANTHROPIC_VERTEX_DEEPAGENTS:
         extra["LIGHTSPEED_MODEL_PROVIDER"] = "anthropic"
         project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID", "").strip()
         if project:
             extra["LIGHTSPEED_PROVIDER_PROJECT"] = project
+        region = os.environ.get("CLOUD_ML_REGION", "").strip()
+        if region:
+            extra["LIGHTSPEED_PROVIDER_REGION"] = region
     elif provider_name == PROVIDER_ANTHROPIC_BEDROCK_DEEPAGENTS:
         region = os.environ.get("AWS_REGION", "").strip()
         if region:

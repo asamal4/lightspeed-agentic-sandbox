@@ -453,30 +453,6 @@ def _headers_dict(server: ResolvedMCPServer | AdmittedMCPProviderServer) -> dict
     return {h.name: h.value for h in server.headers}
 
 
-def to_gemini_mcp_toolsets(servers: list[AdmittedMCPProviderServer]) -> list[Any]:
-    """Convert resolved servers to Google ADK MCP toolsets."""
-    from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
-    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
-
-    from lightspeed_agentic.tls import create_async_http_client
-
-    toolsets: list[Any] = []
-    for s in servers:
-        params = StreamableHTTPConnectionParams(
-            url=s.url,
-            headers=_headers_dict(s) if s.headers else None,
-            timeout=s.timeout,
-            httpx_client_factory=create_async_http_client,
-        )
-        toolsets.append(
-            McpToolset(
-                connection_params=params,
-                tool_filter=list(s.allowed_tool_names),
-            )
-        )
-    return toolsets
-
-
 def to_openai_mcp_servers(servers: list[AdmittedMCPProviderServer]) -> list[Any]:
     """Convert resolved servers to OpenAI Agents MCP server instances."""
     from agents.mcp import MCPServerStreamableHttp, MCPServerStreamableHttpParams

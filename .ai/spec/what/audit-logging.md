@@ -1,14 +1,14 @@
 # Audit Logging
 
-Implementation spec for compliance logging and the named three-provider trace profile. Parent spec: `ols/.ai/spec/what/audit-logging.md` remains authoritative for cross-repository audit/logging and correlation requirements; the sandbox producer exception is scoped in `data-collection.md`, without changing the parent contract.
+Implementation spec for compliance logging and the named three-model-family trace profile. Parent spec: `ols/.ai/spec/what/audit-logging.md` remains authoritative for cross-repository audit/logging and correlation requirements; the sandbox producer exception is scoped in `data-collection.md`, without changing the parent contract.
 
 Telemetry follows the named [OTel GenAI profile pinned at commit `4f85037ef86e92c510d2ef881a58f1076f6fc0e4`](https://github.com/open-telemetry/semantic-conventions-genai/tree/4f85037ef86e92c510d2ef881a58f1076f6fc0e4/docs/gen-ai). Upstream status at that revision is Development; this does not claim every optional convention or add a dependency.
 
-## Harness Consolidation [PLANNED: OLS-4434]
+## Harness Consolidation [PARTIALLY IMPLEMENTED: OLS-4434]
 
-For migrated routes, [provider-contract.md rules 57 and 60–62](provider-contract.md#deepagents-consolidation-planned-ols-4434) and [data-collection.md](data-collection.md#harness-consolidation-planned-ols-4434) replace SDK-specific ADK/OpenAI Agents hook requirements below with a shared DeepAgents/LangChain capture path. Keep normalized event types, approved audit/log projections, run correlation, real provider/call metadata, usage, and configured capture/export gates; built-in tools follow DeepAgents names. Inspected tool paths use payload-free developer logging for all migrated models.
+Anthropic and Vertex/Google routes use shared DeepAgents/LangChain generation capture; OpenAI remains on its legacy Agents hooks. The Gemini ADK adapter and its capture path are removed. For migrated routes, [provider-contract.md rules 57 and 60–62](provider-contract.md#deepagents-consolidation-partially-implemented-ols-4434) and [data-collection.md](data-collection.md#harness-consolidation-partially-implemented-ols-4434) describe current capture; OpenAI-specific hooks remain until its migration. Keep normalized event types, approved audit/log projections, run correlation, real provider/call metadata, usage, and configured capture/export gates; DeepAgents built-in tools apply to both Anthropic and Vertex Gemini. Inspected tool paths use payload-free developer logging for all DeepAgents routes.
 
-The parent inspection/collection contract remains authoritative for native source evidence: a successful native tool source span retains its raw callback result independently of later inspection. Rejection suppresses normalized result events and Result CRs, not completed source evidence; compliance copies follow the parent content policy. This exception takes precedence over older statements below that could otherwise be read to suppress all canonical source-result attributes. Changed native span/event/message behavior requires the parent component/Dataverse compatibility review and version decision before implementation merges; consolidation grants no waiver.
+The parent inspection/collection contract remains authoritative for native source evidence: a successful native tool source span retains its raw callback result independently of later inspection. Rejection suppresses normalized result events and Result CRs, not completed source evidence; compliance copies follow the parent content policy. This exception takes precedence over older statements below that could otherwise be read to suppress all canonical source-result attributes. Changed native span/event/message behavior requires the parent component/Dataverse compatibility review and version decision before implementation merges; migration grants no waiver.
 
 ## Behavioral Rules
 
@@ -18,7 +18,7 @@ The parent inspection/collection contract remains authoritative for native sourc
 
 2. The sandbox MUST create an `execute_tool {gen_ai.tool.name}` span for each local tool execution. Tool spans are `INTERNAL` children of the invocation span and use only actual SDK tool-call IDs.
 
-3. `run_agent_query()` and `AuditLogger` create canonical invocation/tool spans; provider adapters create canonical main-agent generation spans. Each accepted generation and each local `execute_tool` span is a direct child of the canonical `invoke_agent` span, which is itself a child of the received operator context. ADK-native `call_llm`/`generate_content` spans are not canonical and are omitted only by the stdout and OTLP trace exporters for the exact `gcp.vertex.agent` instrumentation scope (rule 4h).
+3. `run_agent_query()` and `AuditLogger` create canonical invocation/tool spans; DeepAgents and OpenAI create canonical main-agent generation spans. Each accepted generation and each local `execute_tool` span is a direct child of the canonical `invoke_agent` span, which is itself a child of the received operator context. Spans under the exact `gcp.vertex.agent` instrumentation scope are omitted only by the stdout and OTLP trace exporters (rule 4h); this filter does not imply an active ADK provider adapter.
 
 ### GenAI Attributes — Invocation Span
 
@@ -41,23 +41,23 @@ Message attributes are compact JSON strings matching the pinned schemas. The inv
 
 ### GenAI Attributes — Provider Generation Span
 
-4a. DeepAgents and OpenAI MUST create `SpanKind.CLIENT` `chat {gen_ai.request.model}` child spans with operation `chat`; Gemini MUST create `SpanKind.CLIENT` `generate_content {gen_ai.request.model}` child spans with operation `generate_content`. Each uses the configured request model, actual provider name, and available invocation `agenticrun.uid`/`agenticrun.phase`. Generation spans use the invocation context captured before the provider query and MUST NOT become current.
+4a. DeepAgents and OpenAI MUST create `SpanKind.CLIENT` `chat {gen_ai.request.model}` child spans with operation `chat`. This includes Vertex Gemini through the shared DeepAgents route; it does not create a separate `generate_content` span. Each span uses the configured request model, actual provider name, and available invocation `agenticrun.uid`/`agenticrun.phase`. Generation spans use the invocation context captured before the provider query and MUST NOT become current.
 
-4b. DeepAgents provider names are `anthropic`, `aws.bedrock`, or `gcp.vertex_ai`; OpenAI (including compatible/Azure clients) uses `openai`; Gemini uses `gcp.vertex_ai` or `gcp.gemini` according to the existing Vertex selection. OpenAI MUST set `openai.api.type` from its existing `uses_responses_api` decision; Azure can select either API type.
+4b. DeepAgents provider names come from the resolved route: `anthropic`, `aws.bedrock`, or `gcp.vertex_ai` (including Vertex Gemini). OpenAI, including compatible/Azure clients, uses `openai`. OpenAI MUST set `openai.api.type` from its existing `uses_responses_api` decision; Azure can select either API type.
 
 4c. Generation `gen_ai.output.messages` MUST contain only SDK-observed output and preserve source message/item/content/part order. The DeepAgents structured-output shaping request is a separate generation whose output is the raw model response. Generation spans MUST NOT repeat input/system histories or reconstruct output from `ProviderEvent`/legacy choice deltas. Provider-specific part mapping is defined in `data-collection.md`.
 
-4d. Set `gen_ai.response.model`, `gen_ai.response.id`, and `gen_ai.response.finish_reasons` only from actual SDK evidence. DeepAgents and OpenAI MUST NOT substitute configured models, LangChain run IDs, or transport/item IDs. Gemini maps actual `model_version` and `finish_reason` when present; an ADK `Event.id` MUST NOT be used as a response ID.
+4d. Set `gen_ai.response.model`, `gen_ai.response.id`, and `gen_ai.response.finish_reasons` only from actual SDK evidence. DeepAgents and OpenAI MUST NOT substitute configured models, LangChain run IDs, or transport/item IDs. Vertex Gemini follows the DeepAgents LangChain result-metadata path; ADK `Event.id` and `model_version` fields are not used by this route.
 
-4e. DeepAgents and Gemini MUST preserve present input/output/reasoning usage counts, including explicit zero, and omit absent counts. OpenAI MUST read usage only when `ModelResponse.usage.requests > 0`, preserving present zero input/output counts and omitting missing counts; emit reasoning output tokens only for supplied nonzero reasoning detail. Child-generation usage MUST NOT be summed with invocation aggregate usage.
+4e. DeepAgents MUST preserve present input/output/reasoning usage counts, including explicit zero, for Anthropic and Vertex Gemini routes, and omit absent counts. OpenAI MUST read usage only when `ModelResponse.usage.requests > 0`, preserving present zero input/output counts and omitting missing counts; emit reasoning output tokens only for supplied nonzero reasoning detail. Child-generation usage MUST NOT be summed with invocation aggregate usage.
 
-4f. DeepAgents retains failure output only when the callback exposes an `LLMResult`; OpenAI records output only from a completed response and does not recover stream deltas. Gemini records only output exposed by Runner events. Observed generation failures are ERROR; Gemini propagates exceptions/cancellation unchanged after closing with the exception class, records an explicit `error_code`, and uses `generation_interrupted` for an early close without an exception. No provider adds delta recovery.
+4f. DeepAgents retains failure output only when the callback exposes an `LLMResult`, including for Vertex Gemini; OpenAI records output only from a completed response and does not recover stream deltas. Observed generation failures are ERROR; exceptions/cancellation propagate unchanged after span closure, and an early close without an exception uses `generation_interrupted`. No provider adds delta recovery.
 
-4g. Gemini registers public `before_model_callback` and `after_model_callback` only on the main ADK `Agent`. The before callback starts the span; the after callback records a completion timestamp only when `llm_response.partial` is false and does not end it. A subsequent before callback MUST close any still-open generation with `error.type="generation_interrupted"` before opening the next span. The Runner loop uses finalized main-agent model events to retain ADK-generated function-call IDs. Because ADK may queue partial events after the final callback, `event.partial` MUST guard updates: partial events update the open span; the finalized aggregate replaces them and ends the span at the callback timestamp, before local tool execution. Local `function_response` results use the shared path after `_trim_tool_response`; hosted tool parts remain in the generation message. Gemini local `function_response` error classification follows `provider-contract.md` rule 43; this trace-only metadata MUST NOT replace the existing response payload or actual function-call ID or change `EventLogger`/developer-log contents.
+4g. Vertex Gemini uses the same DeepAgents LangChain callback as Anthropic. The callback selects main-agent chat-model requests, records the observed `LLMResult`/`AIMessage` output and metadata, and closes the span at model completion. It does not register ADK callbacks, consume Runner events, or classify ADK `function_response` values. Failure and interruption behavior follows rule 4f.
 
-4h. The stdout and OTLP trace exporters MUST exclude spans whose instrumentation scope name is exactly `gcp.vertex.agent`; no rename, projection, or attribute normalization is applied. The exclusion affects only these two trace exporters: native spans continue through TracerProvider processors, their events, IDs, parentage, status, resources, scope, and dropped counters remain unmodified, and every other instrumentation scope is unaffected. Native ADK log correlation, event contents, processors, and existing log gates remain unchanged. `invoke_agent` remains a child of the received operator context, and each accepted canonical generation and local `execute_tool` span remains directly parented to `invoke_agent`, so excluding ADK spans MUST NOT orphan or reparent canonical spans.
+4h. The stdout and OTLP trace exporters MUST exclude spans whose instrumentation scope name is exactly `gcp.vertex.agent`; no rename, projection, or attribute normalization is applied. The exclusion affects only these two trace exporters: native spans continue through TracerProvider processors, their events, IDs, parentage, status, resources, scope, and dropped counters remain unmodified, and every other instrumentation scope is unaffected. Existing log correlation, event contents, processors, and log gates remain unchanged. `invoke_agent` remains a child of the received operator context, and each accepted canonical generation and local `execute_tool` span remains directly parented to `invoke_agent`, so excluding vendor-scope spans MUST NOT orphan or reparent canonical spans.
 
-4i. The supported Gemini accuracy boundary is batch and default progressive SSE. If progressive SSE is explicitly disabled, the legacy SDK aggregator can split, reorder, or discard aggregates, leaving generation parts or tool-call links incomplete. Do not add delta recovery or mutate SDK flags; no token-chronology guarantee is made.
+4i. Vertex Gemini generation capture follows the shared DeepAgents/LangChain `chat` callback path. The runtime records only LangChain-exposed results; it does not reconstruct provider deltas or claim token chronology.
 
 ### GenAI Attributes — Tool Span
 
@@ -95,7 +95,7 @@ Use strict JSON parsing for tool strings: accept standards-compliant finite JSON
 12. Canonical invocation, local-tool, and provider-generation spans flow through the shared TracerProvider. `invoke_agent` is a child of the received operator context; each accepted generation and local `execute_tool` span is a direct child of `invoke_agent`. Legacy choice events remain a separate audit projection. At the export boundary only, the stdout and OTLP trace exporters exclude spans whose instrumentation-scope name is exactly `gcp.vertex.agent`; the filter does not rename or normalize spans, mutate native spans/events/parents or processors, or affect other scopes.
     - **OTLP trace exporter** omits only the exact `gcp.vertex.agent` scope and sends remaining trace data when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
     - **Stdout exporter** omits that same scope and serializes remaining spans as OTLP JSON when audit is enabled.
-    - **Span-event → log processor** continues forwarding original audit events only when the endpoint and audit are enabled; ADK log correlation and event contents remain native.
+    - **Span-event → log processor** continues forwarding original audit events only when the endpoint and audit are enabled; existing span-event log correlation and event contents remain unchanged.
 
 13. Python `logging` MUST emit developer-debugging messages and MUST NOT be used at AuditLogger call sites to re-record span/event data. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, stdlib logging is dual-shipped to stderr and OTLP (`LoggingHandler` on the root logger). The span-event → log bridge also emits through that same stdlib path so templog gets dual-ship without a separate OTel Logs API emit. This collapses into:
     - OTel spans and legacy events for audit (stdout + OTLP traces), with templog OTLP logs (and stderr) via the bridge → LoggingHandler.
@@ -103,19 +103,19 @@ Use strict JSON parsing for tool strings: accept standards-compliant finite JSON
 
 ### Structured Log Format
 
-14. The stdout exporter MUST emit OTLP JSON — the OTel standard wire format — for the spans it exports. The span data comes from the shared TracerProvider and includes the enabled three-provider canonical profile attributes; only the exact `gcp.vertex.agent` instrumentation scope is excluded. This is not a custom transcript format.
+14. The stdout exporter MUST emit OTLP JSON — the OTel standard wire format — for the spans it exports. The span data comes from the shared TracerProvider and includes the enabled three-model-family canonical profile attributes; only the exact `gcp.vertex.agent` instrumentation scope is excluded. This is not a custom transcript format.
 
 15. The stdout exporter MUST NOT truncate span attributes or event attributes. Full fidelity is preserved; downstream size limits remain best-effort collection constraints.
 
 ### Legacy Provider Event Projection
 
-16. **DeepAgents / Anthropic** (`providers/deepagents.py`): Preserve existing `gen_ai.choice` text events from `AIMessage` and reasoning events from reasoning `content_blocks`; create tool spans from `AIMessage.tool_calls` and `ToolMessage` content. Existing aggregate usage remains on the invocation span through `ResultEvent`.
+16. **DeepAgents / Anthropic and Vertex Gemini** (`providers/deepagents.py`): Preserve existing `gen_ai.choice` text events from `AIMessage` and reasoning events from reasoning `content_blocks`; create tool spans from `AIMessage.tool_calls` and `ToolMessage` content. Vertex Gemini uses this same shared event projection. Existing aggregate usage remains on the invocation span through `ResultEvent`.
 
 17. **OpenAI** (`providers/openai.py`): Preserve buffered `gen_ai.choice` text events from stream deltas and reasoning events when present; create tool spans from existing tool call/output items. Existing aggregate usage remains on the invocation span through `ResultEvent`.
 
-18. **Gemini** (`providers/gemini.py`): Preserve buffered `gen_ai.choice` text events from text parts and reasoning events from thought parts when present; create tool spans from function-call/response parts. Existing aggregate usage remains on the invocation span through `ResultEvent`.
+18. **Vertex Gemini route.** There is no separate Gemini provider event projection; Vertex Gemini uses the DeepAgents event mapping in rule 16.
 
-These legacy projections and their SDK/event behavior remain unchanged. DeepAgents, OpenAI, and Gemini capture canonical main-agent generations separately at their SDK boundaries; native ADK spans are omitted only from stdout and OTLP trace exports. Developer logs and templog projections are not changed.
+The existing `gen_ai.choice` projection and its gates remain unchanged. DeepAgents (Anthropic and Vertex Gemini) and OpenAI capture canonical main-agent generations through their respective model callbacks; spans under the exact `gcp.vertex.agent` scope are omitted only from stdout and OTLP trace exports. Developer logs and templog projections are not changed.
 
 ### Tool-Result Inspection [PLANNED: OLS-3928]
 
@@ -167,15 +167,15 @@ These legacy projections and their SDK/event behavior remain unchanged. DeepAgen
 
 ### Agentic Trace Profile
 
-27. The audit/tracing layer MUST emit the invocation, tool, and three-provider generation attributes defined in `data-collection.md` through the existing shared trace runtime. Existing `gen_ai.choice` events and their log projections remain legacy outputs with their old gates and ordering. The stdout and OTLP trace exporters exclude only spans with the exact `gcp.vertex.agent` instrumentation-scope name; native span processing and log behavior/gates remain unchanged, and other scopes are unaffected. The sandbox producer exception does not change the parent collection contract outside this scope.
+27. The audit/tracing layer MUST emit the invocation, tool, and three-model-family generation attributes defined in `data-collection.md` through the existing shared trace runtime. Existing `gen_ai.choice` events and their log projections remain legacy outputs with their old gates and ordering. The stdout and OTLP trace exporters exclude only spans with the exact `gcp.vertex.agent` instrumentation-scope name; native span processing and log behavior/gates remain unchanged, and other scopes are unaffected. The sandbox producer exception does not change the parent collection contract outside this scope.
 
 ## Verification
 
-- Exported regressions: [test_run_agent.py](../../../tests/test_run_agent.py), [test_audit.py](../../../tests/test_audit.py), [test_tracing.py](../../../tests/test_tracing.py), [test_deepagents_generation_spans.py](../../../tests/test_deepagents_generation_spans.py), [test_openai_generation_spans.py](../../../tests/test_openai_generation_spans.py), and [test_gemini_telemetry.py](../../../tests/test_gemini_telemetry.py) cover invocation/tool/provider-generation spans and legacy audit/log projections. `test_tracing.py` covers exact-scope exporter filtering and native log preservation; `test_gemini_telemetry.py` covers Gemini function-response error classification and existing result-log behavior.
+- Exported regressions: [test_run_agent.py](../../../tests/test_run_agent.py), [test_audit.py](../../../tests/test_audit.py), [test_tracing.py](../../../tests/test_tracing.py), [test_deepagents_generation_spans.py](../../../tests/test_deepagents_generation_spans.py), and [test_openai_generation_spans.py](../../../tests/test_openai_generation_spans.py) cover invocation/tool spans, shared DeepAgents capture, OpenAI capture, and legacy audit/log projections. [test_gemini_models.py](../../../tests/test_gemini_models.py) covers offline Vertex Gemini construction. The Vertex/Google case in `test_deepagents_generation_spans.py` covers shared DeepAgents capture with a fake model and a directly constructed route.
 - DeepAgents/OpenAI offline trace smoke proof and detailed producer/wire scope: [data-collection.md Verification](data-collection.md#verification). It exercised in-memory exports, all four audit/content-gate combinations, OTLP protobuf reconstruction, failure/cancellation, and inspection rejection; no live provider API or deployed collector/FileExporter/Dataverse path was exercised.
-- Current ADK 2.11 canonical-only exporter smoke facts and limits: [data-collection.md Verification](data-collection.md#verification).
+- Historical pre-migration ADK 2.11 exporter smoke facts and limits: [data-collection.md Verification](data-collection.md#verification); these do not describe the current Vertex Gemini route.
 - Cancellation boundary/OTLP smoke: root ERROR/`CancelledError` and pending-tool ERROR/`missing_tool_result` survived the wire with no tool result, duration-histogram observation, or cancellation-triggered choice/log flush.
-- Existing log/metric regression checks: [test_run_agent.py](../../../tests/test_run_agent.py) verifies cancellation does not flush legacy event buffers or log cancellation details; [test_gemini_telemetry.py](../../../tests/test_gemini_telemetry.py) verifies Gemini tool-result log output; [test_tracing.py](../../../tests/test_tracing.py) verifies LoggingHandler/span-event log forwarding and correlation gates; [test_metrics.py](../../../tests/test_metrics.py) verifies in-process histogram recording.
+- Existing log/metric regression checks: [test_run_agent.py](../../../tests/test_run_agent.py) verifies cancellation does not flush legacy event buffers or log cancellation details; [test_tracing.py](../../../tests/test_tracing.py) verifies LoggingHandler/span-event log forwarding and correlation gates; [test_metrics.py](../../../tests/test_metrics.py) verifies in-process histogram recording.
 - Existing live batch coverage: [sandbox_e2e.feature](../../../tests/e2e/features/sandbox_e2e.feature) checks trace and bridged audit-log export; it is not deployed FileExporter/Dataverse proof for this profile.
 
 ### MCP Semantic Conventions [UNTRACKED]
@@ -185,10 +185,10 @@ These legacy projections and their SDK/event behavior remain unchanged. DeepAgen
 ## Cross-References
 
 - `run-api.md` — batch tracing lifecycle and invocation span
-- `provider-contract.md` — unchanged provider-event behavior, optional trace-only tool metadata, and the three-provider generation profile
+- `provider-contract.md` — shared provider-event behavior, optional trace-only tool metadata, and route-based generation capture
 - Parent workspace `ols/.ai/spec/what/templog.md` — temporary audit log storage; sandbox emission tracked by OLS-3515
 - `ols/.ai/spec/what/audit-logging.md` — parent cross-repository audit/logging and correlation requirements; sandbox producer exception is scoped in `data-collection.md`
-- `data-collection.md` — named three-provider profile and its parent-contract scope
+- `data-collection.md` — named three-model-family profile and its parent-contract scope
 - `ols/.ai/spec/what/agentic-data-collection.md` — parent collection contract, unchanged outside the sandbox producer exception
 - [Pinned OTel GenAI profile](https://github.com/open-telemetry/semantic-conventions-genai/tree/4f85037ef86e92c510d2ef881a58f1076f6fc0e4/docs/gen-ai) — Development snapshot; named alignment profile
 - [OTel MCP Semantic Conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md)

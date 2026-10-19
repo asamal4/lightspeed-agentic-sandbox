@@ -22,6 +22,7 @@ def _credential_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
     monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     # Explicit constructors must not select a backend from these flags.
     monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "1")
     monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
@@ -166,6 +167,30 @@ def test_vertex_model_preserves_project_region_endpoint_thinking_and_tls(
     assert model.async_client._client is http_clients[1]
 
 
+def test_vertex_model_uses_impersonated_credentials(
+    http_clients: tuple[httpx.Client, httpx.AsyncClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.auth.credentials import AnonymousCredentials
+
+    from lightspeed_agentic.providers import cloud_credentials
+    from lightspeed_agentic.providers.model_router import ModelParameters
+    from lightspeed_agentic.providers.models.anthropic import create_vertex_model
+
+    impersonated = AnonymousCredentials()
+    monkeypatch.setattr(cloud_credentials, "create_vertex_credentials", lambda: impersonated)
+
+    model = create_vertex_model(
+        ModelParameters(
+            model="claude-sonnet-4-6@20260217", project="test-project", region="us-east5"
+        )
+    )
+
+    assert model.credentials is impersonated
+    assert model.client._client is http_clients[0]
+    assert model.async_client._client is http_clients[1]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "expected_root"),
@@ -230,28 +255,12 @@ async def test_vertex_requests_preserve_api_version_and_explicit_paths(
     assert [str(request.url) for request in requests] == [expected_url, expected_url]
 
 
-@pytest.mark.parametrize(
-    ("hosting", "project", "region", "message"),
-    [
-        ("bedrock", None, None, "Bedrock requires a region"),
-        ("vertex", None, "us-east5", "Vertex requires a project"),
-        ("vertex", "test-project", None, "Vertex requires a region"),
-    ],
-)
-def test_cloud_models_reject_missing_required_parameters(
-    hosting: str, project: str | None, region: str | None, message: str
-) -> None:
+def test_bedrock_model_rejects_missing_region() -> None:
     from lightspeed_agentic.providers.model_router import ModelParameters
-    from lightspeed_agentic.providers.models.anthropic import (
-        create_bedrock_model,
-        create_vertex_model,
-    )
+    from lightspeed_agentic.providers.models.anthropic import create_bedrock_model
 
-    constructor = create_bedrock_model if hosting == "bedrock" else create_vertex_model
-    parameters = ModelParameters(model="test-model", project=project, region=region)
-
-    with pytest.raises(ValueError, match=message):
-        constructor(parameters)
+    with pytest.raises(ValueError, match="Bedrock requires a region"):
+        create_bedrock_model(ModelParameters(model="test-model"))
 
 
 def test_module_import_does_not_load_optional_provider_sdks() -> None:

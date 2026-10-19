@@ -65,8 +65,10 @@ belongs in unit tests.
   so ``SKILL.md`` is a regular file (ConfigMap symlinks break OpenAI lazy skill discovery)
   and DeepAgents does not list those internal directories;
   writable ``.agents`` under the same emptyDir; ``E2E_OUTPUT_DIR`` for echo-token only.
-- **Multi-provider matrix** — `anthropic-vertex-deepagents`, `anthropic-bedrock-deepagents`,
-  `gemini-vertex-adk`, `openai-agents`; OpenAI validated most frequently on cluster.
+- **Provider matrix** — `anthropic-vertex-deepagents`, `anthropic-bedrock-deepagents`,
+  `gemini-vertex-adk`, `openai-agents`; `gemini-vertex-adk` is a legacy matrix ID, but its
+  Job config selects the `vertex/google` model route, which now runs through DeepAgents.
+  It does not invoke the removed ADK provider adapter. OpenAI is validated most frequently on cluster.
   Bedrock Jobs MUST use a Bedrock model or inference profile ID (e.g.
   `global.anthropic.claude-haiku-4-5-20251001-v1:0` from `tests/e2e/config.env` as
   `ANTHROPIC_BEDROCK_MODEL`); Anthropic API shorthand such as `claude-haiku-4-5` is invalid on Bedrock.
@@ -122,7 +124,7 @@ scripts/e2e-install-openai-creds.sh
 ```bash
 make e2e openai-agents
 # or: bash scripts/e2e-containers.sh openai-agents
-# matrix ids: anthropic-vertex-deepagents | anthropic-bedrock-deepagents | gemini-vertex-adk | openai-agents
+# matrix ids: anthropic-vertex-deepagents | anthropic-bedrock-deepagents | gemini-vertex-adk (legacy ID for vertex/google DeepAgents) | openai-agents
 # pytest filter: bash scripts/e2e-containers.sh openai-agents -- -k reasoning
 ```
 
@@ -147,7 +149,7 @@ make e2e openai-agents -k mcp
 
 **How it works:**
 - `suite_setup.py._session_job_env()` forwards `OPENAI_BASE_URL` to batch Jobs
-- `e2e-containers.sh` reads model from provider-specific env vars (`OPENAI_MODEL`, `GEMINI_MODEL`, etc.)
+- `e2e-containers.sh` reads model from provider-specific env vars (`OPENAI_MODEL`, `GEMINI_MODEL`, etc.); the Gemini matrix ID maps to `LIGHTSPEED_MODEL_PROVIDER=google`
 - `e2e-install-openai-creds.sh` includes `OPENAI_MODEL` and `OPENAI_BASE_URL` as secret keys
 - Batch pods mount the secret via `envFrom`, exposing all keys as environment variables
 - OpenAI client uses `OPENAI_BASE_URL` if set; defaults to `api.openai.com` otherwise
@@ -174,7 +176,7 @@ suite default remains `false`.
 | `LIGHTSPEED_AGENT_MAX_TURNS` | `e2e-containers.sh` [PLANNED: OLS-3743] | Required provider iteration cap for every Job |
 | `OPENAI_MODEL` | user | Model name for openai-agents (read by `e2e-containers.sh`, synced to secret) |
 | `OPENAI_BASE_URL` | user | Custom OpenAI-compatible endpoint (optional; defaults to `api.openai.com`) |
-| `GEMINI_MODEL` | user | Model name for gemini-vertex-adk |
+| `GEMINI_MODEL` | user | Vertex Gemini model for the `vertex/google` DeepAgents route (legacy e2e matrix ID: `gemini-vertex-adk`) |
 | `ANTHROPIC_MODEL` | user | Model name for anthropic-vertex-deepagents |
 | `ANTHROPIC_BEDROCK_MODEL` | user | Model name for anthropic-bedrock-deepagents |
 | `E2E_ARGS` | user / `--` passthrough | Extra pytest args (e.g. `-v`, `-k`, single file) |

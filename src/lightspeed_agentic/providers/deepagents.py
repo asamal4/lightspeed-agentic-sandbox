@@ -596,6 +596,7 @@ class DeepAgentsProvider(AgentProvider):
             schema_model = (
                 _json_schema_to_pydantic(options.output_schema)
                 if isinstance(options.output_schema, dict)
+                and self._model_route.structured_output_schema_mode == "pydantic"
                 else options.output_schema
             )
 

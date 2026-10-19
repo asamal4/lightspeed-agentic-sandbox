@@ -28,7 +28,6 @@ from lightspeed_agentic.mcp import (
     parse_mcp_servers,
     render_mcp_policy_context,
     split_admitted_mcp_servers,
-    to_gemini_mcp_toolsets,
     to_openai_mcp_servers,
 )
 
@@ -758,41 +757,6 @@ class TestDiscoverAndAdmitMCPServer:
         assert "reason=missing_rbac_metadata" in caplog.text
         assert "reason=no_admitted_tools" in caplog.text
         assert "Delete a namespace" not in caplog.text
-
-
-class TestGeminiAdapter:
-    def test_creates_toolsets(self):
-        servers = [
-            AdmittedMCPProviderServer(
-                name="ocp-mcp",
-                url="https://ocp:8443/mcp",
-                timeout=90,
-                allowed_tool_names=("get_pod", "delete_pod"),
-            )
-        ]
-        toolsets = to_gemini_mcp_toolsets(servers)
-        assert len(toolsets) == 1
-        from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
-
-        assert isinstance(toolsets[0], McpToolset)
-        assert toolsets[0].tool_filter == ["get_pod", "delete_pod"]
-
-    def test_passes_connection_params(self):
-        servers = [
-            AdmittedMCPProviderServer(
-                name="s",
-                url="http://test:8080/mcp",
-                timeout=45,
-                headers=(ResolvedMCPHeader(name="X-Key", value="val"),),
-                allowed_tool_names=("get_pod",),
-            )
-        ]
-        toolsets = to_gemini_mcp_toolsets(servers)
-        params = toolsets[0]._connection_params
-        assert params.url == "http://test:8080/mcp"
-        assert params.headers == {"X-Key": "val"}
-        assert params.timeout == 45.0
-        assert callable(params.httpx_client_factory)
 
 
 class TestOpenAIAdapter:

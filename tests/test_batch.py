@@ -115,7 +115,7 @@ class TestBatchMain:
             ("anthropic", "anthropic", "deepagents"),
             ("vertex", "anthropic", "deepagents"),
             ("bedrock", "anthropic", "deepagents"),
-            ("vertex", "google", "gemini"),
+            ("vertex", "google", "deepagents"),
             ("vertex", "openai", "openai"),
             ("openai", "openai", "openai"),
             ("azure", "openai", "openai"),
@@ -177,7 +177,12 @@ class TestBatchMain:
             assert create.call_args.args[0] == "deepagents"
             route = create.call_args.args[1]
             assert route.model == "exact-configured-model"
-            assert route.route == (hosting if hosting == "anthropic" else f"{hosting}/anthropic")
+            expected_route = (
+                hosting
+                if hosting == "anthropic"
+                else f"{hosting}/{family if hosting == 'vertex' else 'anthropic'}"
+            )
+            assert route.route == expected_route
         else:
             create.assert_called_once_with(adapter)
         provider.aclose.assert_awaited_once_with()

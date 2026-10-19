@@ -15,7 +15,6 @@ import pytest
 from lightspeed_agentic.config import ResolvedSDK, resolve_router_model
 from lightspeed_agentic.providers.models import anthropic
 from lightspeed_agentic.readiness import check_provider_env, run_readiness_checks
-from lightspeed_agentic.types import DEFAULT_MODEL
 
 if TYPE_CHECKING:
     from lightspeed_agentic.providers.model_router import ModelCreator
@@ -25,7 +24,7 @@ _ROUTES = [
     ("anthropic", None, "ANTHROPIC_MODEL", "deepagents"),
     ("vertex", "anthropic", "ANTHROPIC_MODEL", "deepagents"),
     ("bedrock", None, "ANTHROPIC_MODEL", "deepagents"),
-    ("vertex", "google", "GEMINI_MODEL", "gemini"),
+    ("vertex", "google", "GEMINI_MODEL", "deepagents"),
     ("vertex", "openai", "OPENAI_MODEL", "openai"),
     ("openai", None, "OPENAI_MODEL", "openai"),
     ("azure", None, "OPENAI_MODEL", "openai"),
@@ -92,7 +91,10 @@ def test_route_preserves_legacy_dispatch_and_model_precedence(
         assert isinstance(route, ResolvedModelRoute)
         assert route.model == expected_model
         assert route.model_parameters.model == expected_model
-        assert route.route == ("anthropic" if provider == "anthropic" else f"{provider}/anthropic")
+        expected_route = (
+            "anthropic" if provider == "anthropic" else f"{provider}/{family or 'anthropic'}"
+        )
+        assert route.route == expected_route
     else:
         assert route is None
         assert isinstance(sdk, ResolvedSDK)
@@ -169,32 +171,40 @@ def test_model_family_resolution_retains_readiness_configuration(
     assert result.azure_auth_mode == ("api_key" if provider == "azure" else None)
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "vertex", "bedrock"])
-def test_anthropic_routes_preserve_default_model(provider: str) -> None:
-    from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
+@pytest.mark.parametrize(
+    ("provider", "family"),
+    [
+        ("anthropic", None),
+        ("vertex", "anthropic"),
+        ("bedrock", None),
+        ("vertex", "google"),
+        ("vertex", "openai"),
+        ("openai", None),
+        ("azure", None),
+    ],
+)
+def test_model_routes_require_a_configured_model(provider: str, family: str | None) -> None:
+    from lightspeed_agentic.providers.model_router import resolve_model_route
 
     os.environ["LIGHTSPEED_PROVIDER"] = provider
-    if provider == "vertex":
-        os.environ["LIGHTSPEED_MODEL_PROVIDER"] = "anthropic"
+    if family:
+        os.environ["LIGHTSPEED_MODEL_PROVIDER"] = family
+    if provider == "azure":
+        os.environ["AZURE_OPENAI_API_KEY"] = "test-key"
 
-    sdk, route = resolve_model_route()
-
-    assert sdk is None
-    assert isinstance(route, ResolvedModelRoute)
-    assert route.model == DEFAULT_MODEL
-    assert route.model_parameters.model == DEFAULT_MODEL
+    with pytest.raises(ValueError, match="No model configured"):
+        resolve_model_route()
 
 
 @pytest.mark.parametrize(
     ("provider", "family", "adapter", "model_env"),
     [
-        ("vertex", "google", "gemini", "GEMINI_MODEL"),
         ("vertex", "openai", "openai", "OPENAI_MODEL"),
         ("openai", None, "openai", "OPENAI_MODEL"),
         ("azure", None, "openai", "OPENAI_MODEL"),
     ],
 )
-def test_unmigrated_routes_return_sdk_without_applying_anthropic_model_resolution(
+def test_openai_routes_return_sdk_with_configured_model(
     provider: str, family: str | None, adapter: str, model_env: str
 ) -> None:
     from lightspeed_agentic.providers.model_router import resolve_model_route
@@ -203,6 +213,7 @@ def test_unmigrated_routes_return_sdk_without_applying_anthropic_model_resolutio
         {
             "LIGHTSPEED_PROVIDER": provider,
             "ANTHROPIC_MODEL": "must-not-be-copied",
+            "LIGHTSPEED_MODEL": "configured-model",
             "AZURE_OPENAI_API_KEY": "test-key",
         }
     )
@@ -214,7 +225,7 @@ def test_unmigrated_routes_return_sdk_without_applying_anthropic_model_resolutio
     assert route is None
     assert isinstance(sdk, ResolvedSDK)
     assert sdk.name == adapter
-    assert model_env not in os.environ
+    assert os.environ[model_env] == "configured-model"
 
 
 @pytest.mark.parametrize(
@@ -297,6 +308,43 @@ def test_anthropic_route_selects_constructor_and_typed_parameters(
     assert "test-bearer" not in repr(route.model_parameters)
 
 
+def test_vertex_google_route_selects_gemini_constructor_and_typed_parameters() -> None:
+    from lightspeed_agentic.providers.model_router import (
+        ModelParameters,
+        ResolvedModelRoute,
+        resolve_model_route,
+    )
+    from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
+
+    os.environ.update(
+        {
+            "LIGHTSPEED_PROVIDER": "vertex",
+            "LIGHTSPEED_MODEL_PROVIDER": "google",
+            "LIGHTSPEED_MODEL": "gemini-2.5-flash",
+            "LIGHTSPEED_PROVIDER_PROJECT": "test-project",
+            "LIGHTSPEED_PROVIDER_REGION": "us-central1",
+            "LIGHTSPEED_PROVIDER_URL": "https://vertex-proxy.example.test/custom",
+        }
+    )
+
+    sdk, route = resolve_model_route()
+
+    assert sdk is None
+    assert isinstance(route, ResolvedModelRoute)
+    assert route.route == "vertex/google"
+    assert route.model == "gemini-2.5-flash"
+    assert route.create_model is create_vertex_gemini_model
+    assert route.model_parameters == ModelParameters(
+        model="gemini-2.5-flash",
+        base_url="https://vertex-proxy.example.test/custom",
+        project="test-project",
+        region="us-central1",
+    )
+    assert route.telemetry_provider == "gcp.vertex_ai"
+    assert route.structured_output_method == "json_schema"
+    assert route.structured_output_schema_mode == "raw_json_schema"
+
+
 def test_route_uses_resolved_anthropic_hosting_and_settings_not_current_environment() -> None:
     from lightspeed_agentic.config import resolve_model_family
     from lightspeed_agentic.providers.model_router import (
@@ -353,6 +401,7 @@ def test_route_uses_resolved_anthropic_hosting_and_settings_not_current_environm
 def test_direct_route_selects_endpoint_specific_shaping(base_url: str | None, method: str) -> None:
     from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
 
+    os.environ["LIGHTSPEED_MODEL"] = "configured-model"
     if base_url:
         os.environ["ANTHROPIC_BASE_URL"] = base_url
 
@@ -367,9 +416,9 @@ def test_direct_route_selects_endpoint_specific_shaping(base_url: str | None, me
 
 @pytest.mark.parametrize(
     ("provider", "project", "region"),
-    [("vertex", "", "us-east5"), ("bedrock", None, "us-east-1")],
+    [("vertex", "", "global"), ("bedrock", None, "us-east-1")],
 )
-def test_cloud_anthropic_routes_preserve_existing_defaults(
+def test_cloud_anthropic_routes_preserve_region_defaults(
     provider: str, project: str | None, region: str
 ) -> None:
     from lightspeed_agentic.providers.model_router import (
@@ -381,13 +430,14 @@ def test_cloud_anthropic_routes_preserve_existing_defaults(
     os.environ["LIGHTSPEED_PROVIDER"] = provider
     if provider == "vertex":
         os.environ["LIGHTSPEED_MODEL_PROVIDER"] = "anthropic"
+    os.environ["LIGHTSPEED_MODEL"] = "configured-model"
 
     sdk, route = resolve_model_route()
 
     assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.model_parameters == ModelParameters(
-        model=DEFAULT_MODEL, project=project, region=region
+        model="configured-model", project=project, region=region
     )
 
 
@@ -402,6 +452,7 @@ def test_vertex_route_preserves_legacy_settings_and_file_readiness(tmp_path: Pat
         {
             "LIGHTSPEED_PROVIDER": "vertex",
             "LIGHTSPEED_MODEL_PROVIDER": "anthropic",
+            "ANTHROPIC_MODEL": "legacy-model",
             "ANTHROPIC_VERTEX_PROJECT_ID": "legacy-project",
             "CLOUD_ML_REGION": "global",
             "ANTHROPIC_BASE_URL": "https://legacy.example.test",
@@ -412,7 +463,7 @@ def test_vertex_route_preserves_legacy_settings_and_file_readiness(tmp_path: Pat
     assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.model_parameters == ModelParameters(
-        model=DEFAULT_MODEL,
+        model="legacy-model",
         project="legacy-project",
         region="global",
         base_url="https://legacy.example.test",
@@ -431,6 +482,7 @@ def test_router_preserves_credential_readiness(provider: str) -> None:
     from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
 
     os.environ["LIGHTSPEED_PROVIDER"] = provider
+    os.environ["LIGHTSPEED_MODEL"] = "configured-model"
     sdk, route = resolve_model_route()
 
     assert sdk is None

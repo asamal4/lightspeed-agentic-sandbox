@@ -176,7 +176,16 @@ def test_run_readiness_checks_provider_env_fails(monkeypatch: pytest.MonkeyPatch
     assert checks["provider_env"].startswith("error: ")
 
 
-def test_run_readiness_checks_rejects_vertex_route_without_project() -> None:
+@pytest.mark.parametrize(
+    ("project", "region", "expected_route_status"),
+    [
+        ("", "us-east5", "error: missing project for vertex/anthropic"),
+        ("test-project", "", "error: missing region for vertex/anthropic"),
+    ],
+)
+def test_run_readiness_checks_rejects_vertex_route_without_parameters(
+    project: str, region: str, expected_route_status: str
+) -> None:
     from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
     from lightspeed_agentic.providers.models.anthropic import create_vertex_model
 
@@ -185,7 +194,7 @@ def test_run_readiness_checks_rejects_vertex_route_without_project() -> None:
         route="vertex/anthropic",
         model="test-model",
         create_model=create_vertex_model,
-        model_parameters=ModelParameters(model="test-model", project="", region="us-east5"),
+        model_parameters=ModelParameters(model="test-model", project=project, region=region),
         telemetry_provider="gcp.vertex_ai",
         structured_output_method="json_schema",
     )
@@ -193,10 +202,44 @@ def test_run_readiness_checks_rejects_vertex_route_without_project() -> None:
     ready, checks = run_readiness_checks(family, route)
 
     assert ready is False
-    assert checks == {
-        "provider_env": "ok",
-        "model_route": "error: missing project for vertex/anthropic",
-    }
+    assert checks == {"provider_env": "ok", "model_route": expected_route_status}
+
+
+@pytest.mark.parametrize(
+    ("project", "region", "expected_route_status"),
+    [
+        (None, "us-central1", "error: missing project for vertex/google"),
+        ("test-project", None, "error: missing region for vertex/google"),
+        ("", "", "error: missing project, region for vertex/google"),
+        ("test-project", "us-central1", "ok"),
+    ],
+)
+def test_run_readiness_checks_validates_vertex_gemini_route(
+    project: str | None,
+    region: str | None,
+    expected_route_status: str,
+) -> None:
+    from lightspeed_agentic.providers.model_router import ModelParameters, ResolvedModelRoute
+    from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
+
+    family = ResolvedModelFamily("google", (), hosting="vertex")
+    route = ResolvedModelRoute(
+        route="vertex/google",
+        model="gemini-2.5-flash",
+        create_model=create_vertex_gemini_model,
+        model_parameters=ModelParameters(
+            model="gemini-2.5-flash",
+            project=project,
+            region=region,
+        ),
+        telemetry_provider="gcp.vertex_ai",
+        structured_output_method="json_schema",
+    )
+
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is (expected_route_status == "ok")
+    assert checks == {"provider_env": "ok", "model_route": expected_route_status}
 
 
 def test_run_readiness_checks_rejects_bedrock_route_without_region() -> None:
@@ -225,7 +268,7 @@ def test_run_readiness_checks_rejects_bedrock_route_without_region() -> None:
 def test_run_readiness_checks_accepts_default_bedrock_region() -> None:
     from lightspeed_agentic.providers.model_router import ResolvedModelRoute, resolve_model_route
 
-    family = ResolvedModelFamily("anthropic", (), hosting="bedrock")
+    family = ResolvedModelFamily("anthropic", (), hosting="bedrock", model="test-model")
     _, route = resolve_model_route(model_family=family)
 
     assert isinstance(route, ResolvedModelRoute)

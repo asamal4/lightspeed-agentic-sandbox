@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 LLM_CREDENTIALS_PATH = "/var/run/secrets/llm-credentials"
 DEFAULT_AZURE_API_VERSION = "2024-08-01-preview"
+DEFAULT_VERTEX_REGION = "global"
 
 
 def _llm_credentials_path() -> str:
@@ -48,7 +49,7 @@ class ResolvedModelFamily:
 class ResolvedSDK:
     """Legacy adapter and readiness configuration retained during migration."""
 
-    name: str  # "deepagents", "gemini", "openai"
+    name: str  # "openai"
     expected_envs: tuple[str, ...]  # credential env vars expected from envFrom
     credential_file_envs: tuple[str, ...] = ()  # env vars whose value is a credentials file path
     azure_auth_mode: str | None = None  # "entra_id" or "api_key"; None for non-Azure
@@ -67,6 +68,13 @@ def _setenv_if_value(key: str, value: str | None) -> None:
 def _resolved_value(value: str | None, env_name: str) -> str | None:
     """Return the explicit value or the corresponding legacy SDK environment value."""
     return value or os.environ.get(env_name, "").strip() or None
+
+
+def _resolve_vertex_region(region: str | None, *legacy_env_names: str) -> str:
+    """Resolve a Vertex region, defaulting to the global endpoint when unspecified."""
+    candidates = [region]
+    candidates.extend(os.environ.get(name, "").strip() for name in legacy_env_names)
+    return next((candidate for candidate in candidates if candidate), DEFAULT_VERTEX_REGION)
 
 
 def _resolve_anthropic(model: str | None, url: str | None) -> ResolvedModelFamily:
@@ -97,7 +105,8 @@ def _resolve_vertex(
             _setenv_if_value("ANTHROPIC_MODEL", model)
             _setenv("CLAUDE_CODE_USE_VERTEX", "1")
             _setenv_if_value("ANTHROPIC_VERTEX_PROJECT_ID", project)
-            _setenv_if_value("CLOUD_ML_REGION", region)
+            resolved_region = _resolve_vertex_region(region, "CLOUD_ML_REGION")
+            _setenv("CLOUD_ML_REGION", resolved_region)
             _setenv(
                 "GOOGLE_APPLICATION_CREDENTIALS",
                 f"{_llm_credentials_path()}/GOOGLE_APPLICATION_CREDENTIALS",
@@ -111,13 +120,15 @@ def _resolve_vertex(
                 model=_resolved_value(model, "ANTHROPIC_MODEL"),
                 base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None,
                 project=os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID", "").strip() or None,
-                region=os.environ.get("CLOUD_ML_REGION", "").strip() or None,
+                region=resolved_region,
             )
         case "google":
             _setenv_if_value("GEMINI_MODEL", model)
-            _setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
             _setenv_if_value("GOOGLE_CLOUD_PROJECT", project)
-            _setenv_if_value("GOOGLE_CLOUD_LOCATION", region)
+            resolved_region = _resolve_vertex_region(
+                region, "CLOUD_ML_REGION", "GOOGLE_CLOUD_LOCATION"
+            )
+            _setenv("GOOGLE_CLOUD_LOCATION", resolved_region)
             _setenv(
                 "GOOGLE_APPLICATION_CREDENTIALS",
                 f"{_llm_credentials_path()}/GOOGLE_APPLICATION_CREDENTIALS",
@@ -128,8 +139,9 @@ def _resolve_vertex(
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
                 hosting="vertex",
                 model=_resolved_value(model, "GEMINI_MODEL"),
+                base_url=url,
                 project=os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip() or None,
-                region=os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip() or None,
+                region=resolved_region,
             )
         case "openai":
             _setenv_if_value("OPENAI_MODEL", model)
@@ -356,7 +368,6 @@ def parse_reasoning_config() -> dict[str, Any] | None:
 
 _MODEL_ENV_VARS = {
     "deepagents": "ANTHROPIC_MODEL",
-    "gemini": "GEMINI_MODEL",
     "openai": "OPENAI_MODEL",
 }
 
@@ -381,9 +392,7 @@ def resolve_startup_model(provider_name: str) -> str | None:
 
 
 def resolve_router_model(provider_name: str, model: str | None = None) -> str:
-    """Resolve model per configuration.md rule 5."""
-    from lightspeed_agentic.types import DEFAULT_MODEL
-
+    """Resolve an explicit, canonical, or SDK-specific model value."""
     if model:
         return model
     lightspeed_model = os.environ.get("LIGHTSPEED_MODEL", "").strip()
@@ -393,7 +402,9 @@ def resolve_router_model(provider_name: str, model: str | None = None) -> str:
     sdk_model = os.environ.get(env_var, "").strip()
     if sdk_model:
         return sdk_model
-    return DEFAULT_MODEL
+    raise ValueError(
+        f"No model configured for {provider_name!r}; set LIGHTSPEED_MODEL or {env_var}"
+    )
 
 
 def parse_agent_timeout() -> int:

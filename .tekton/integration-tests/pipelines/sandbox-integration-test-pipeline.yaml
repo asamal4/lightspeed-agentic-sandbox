@@ -17,8 +17,7 @@ spec:
       sandbox-integration-gemini-vertex-adk,
       sandbox-integration-openai-agents,
       sandbox-integration-anthropic-deepagents,
-      sandbox-integration-azure-openai-agents,
-      sandbox-integration-azure-openai-entra-agents.
+      sandbox-integration-azure-openai-agents.
   params:
     - name: SNAPSHOT
       description: 'The JSON string representing the snapshot of the application under test.'

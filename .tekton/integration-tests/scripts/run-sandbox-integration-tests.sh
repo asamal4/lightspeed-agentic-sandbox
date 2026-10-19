@@ -14,8 +14,9 @@
 # Expects:
 #   - Provider credentials mounted under /var/run/credentials/
 #     (vertex/openai/anthropic-direct: token; bedrock: aws_access_key_id + aws_secret_access_key;
-#      azure api-key: token; azure entra-id: client_id + client_secret + tenant_id)
-#   - AZURE_OPENAI_ENDPOINT set for azure-openai-agents
+#      azure-openai secret: client_id + client_secret + tenant_id + endpoint + model + api_version)
+#   - azure-openai-agents: AZURE_OPENAI_ENDPOINT or secret key 'endpoint' required;
+#     secret keys 'model' and 'api_version' override AZURE_OPENAI_MODEL/LIGHTSPEED_PROVIDER_API_VERSION
 #   - KUBECONFIG (Konflux pipeline mounts the hosted cluster's kubeconfig Secret)
 #   - OPERATOR_REPO (Konflux pipeline clones operator for Result CRDs)
 #   - E2E_NAMESPACE (default openshift-lightspeed)
@@ -86,24 +87,37 @@ case "${PROVIDER}" in
     ;;
   azure-openai-agents)
     if [ -f "${CRED_PATH}" ]; then
-        # azureopenai-apitoken secret (key: token)
+        # azure-openai secret (key: token) — API key mode
         export AZURE_OPENAI_API_KEY
         AZURE_OPENAI_API_KEY="$(tr -d '[:space:]' < "${CRED_PATH}")"
     elif [ -f "${CRED_DIR}/client_id" ] && [ -f "${CRED_DIR}/client_secret" ] && [ -f "${CRED_DIR}/tenant_id" ]; then
-        # azureopenai-entra-id secret (keys: client_id, client_secret, tenant_id)
+        # azure-openai secret (keys: client_id, client_secret, tenant_id) — Entra ID mode
         export AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
         AZURE_CLIENT_ID="$(tr -d '[:space:]' < "${CRED_DIR}/client_id")"
         AZURE_CLIENT_SECRET="$(tr -d '[:space:]' < "${CRED_DIR}/client_secret")"
         AZURE_TENANT_ID="$(tr -d '[:space:]' < "${CRED_DIR}/tenant_id")"
     else
         echo "error: no Azure credentials found under ${CRED_DIR}" >&2
-        echo "  Mount azureopenai-apitoken (key: token) or azureopenai-entra-id" >&2
+        echo "  Mount azure-openai secret with key 'token' (API key) or keys 'client_id', 'client_secret', 'tenant_id' (Entra ID)" >&2
         exit 1
+    fi
+    if [ -z "${AZURE_OPENAI_ENDPOINT:-}" ] && [ -f "${CRED_DIR}/endpoint" ]; then
+        export AZURE_OPENAI_ENDPOINT
+        AZURE_OPENAI_ENDPOINT="$(tr -d '[:space:]' < "${CRED_DIR}/endpoint")"
     fi
     if [ -z "${AZURE_OPENAI_ENDPOINT:-}" ]; then
         echo "error: AZURE_OPENAI_ENDPOINT must be set for azure-openai-agents" >&2
+        echo "  Set the env var or add key 'endpoint' to the credential secret" >&2
         echo "  (e.g. https://my-resource.openai.azure.com/)" >&2
         exit 1
+    fi
+    if [ -z "${AZURE_OPENAI_MODEL:-}" ] && [ -f "${CRED_DIR}/model" ]; then
+        export AZURE_OPENAI_MODEL
+        AZURE_OPENAI_MODEL="$(tr -d '[:space:]' < "${CRED_DIR}/model")"
+    fi
+    if [ -z "${LIGHTSPEED_PROVIDER_API_VERSION:-}" ] && [ -f "${CRED_DIR}/api_version" ]; then
+        export LIGHTSPEED_PROVIDER_API_VERSION
+        LIGHTSPEED_PROVIDER_API_VERSION="$(tr -d '[:space:]' < "${CRED_DIR}/api_version")"
     fi
     export LIGHTSPEED_PROVIDER_URL="${AZURE_OPENAI_ENDPOINT}"
     ;;

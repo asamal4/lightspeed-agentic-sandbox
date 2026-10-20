@@ -12,7 +12,7 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncIterator, Mapping
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 from uuid import UUID
 
 from opentelemetry import context as otel_context
@@ -56,7 +56,14 @@ async def _close_model_clients(model: Any) -> None:
     """Close already-created sync and async clients without triggering lazy creation."""
     clients: list[Any] = []
     model_state = getattr(model, "__dict__", {})
-    for name in ("_async_client", "async_client", "_client", "client"):
+    for name in (
+        "root_async_client",
+        "_async_client",
+        "async_client",
+        "root_client",
+        "_client",
+        "client",
+    ):
         if name in model_state and model_state[name] not in clients:
             clients.append(model_state[name])
 
@@ -87,7 +94,9 @@ def _json_schema_to_pydantic(schema: dict[str, Any], name: str = "OutputModel") 
         else:
             fields[field_name] = (field_type | None, pydantic.Field(None, description=description))
 
-    return pydantic.create_model(name, **fields)
+    return pydantic.create_model(
+        name, __config__=pydantic.ConfigDict(regex_engine="python-re"), **fields
+    )
 
 
 def _resolve_field_type(schema: dict[str, Any], name: str) -> Any:
@@ -102,10 +111,33 @@ def _resolve_field_type(schema: dict[str, Any], name: str) -> Any:
         item_type = _resolve_field_type(schema["items"], f"{name}_item")
         return list[item_type]  # type: ignore[valid-type]
 
-    if "enum" in schema:
-        return Literal[tuple(schema["enum"])]
+    field_type: Any = (
+        Literal[tuple(schema["enum"])]
+        if "enum" in schema
+        else _JSON_SCHEMA_TYPE_MAP.get(json_type, str)
+    )
+    if json_type == "string" and any(
+        key in schema for key in ("minLength", "maxLength", "pattern")
+    ):
+        from pydantic import Field, StringConstraints
 
-    return _JSON_SCHEMA_TYPE_MAP.get(json_type, str)
+        return Annotated[
+            field_type,
+            StringConstraints(
+                min_length=schema.get("minLength"),
+                max_length=schema.get("maxLength"),
+                pattern=schema.get("pattern"),
+            ),
+            # Pydantic can omit Literal constraints from the generated JSON Schema.
+            Field(
+                json_schema_extra={
+                    key: schema[key]
+                    for key in ("minLength", "maxLength", "pattern")
+                    if key in schema
+                }
+            ),
+        ]
+    return field_type
 
 
 def _usage_from_message(msg: Any) -> tuple[int, int]:
@@ -367,6 +399,12 @@ async def _shape_structured_output(
     from langchain_core.messages import HumanMessage, SystemMessage
 
     format_model = model_route.create_model(model_route.model_parameters, None)
+    if model_route.structured_output_schema_mode == "openai_strict_json_schema":
+        from lightspeed_agentic.providers.models.openai import (
+            native_openai_structured_output_schema,
+        )
+
+        schema = native_openai_structured_output_schema(schema)
     structured = format_model.with_structured_output(
         schema,
         method=model_route.structured_output_method,

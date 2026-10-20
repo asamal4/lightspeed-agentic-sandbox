@@ -39,7 +39,12 @@ ECHO_TOKEN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "summary": {"type": "string"},
-        "token": {"type": "string", "minLength": 16, "pattern": "^[0-9a-f]+$"},
+        "token": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 32,
+            "pattern": "^[0-9a-f]+$",
+        },
         "status": {"type": "string", "enum": ["ok"]},
     },
     "required": ["summary", "token", "status"],

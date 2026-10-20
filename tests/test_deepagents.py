@@ -540,6 +540,7 @@ async def test_close_model_clients_closes_only_initialized_clients() -> None:
         ("anthropic", "anthropic", "json_schema"),
         ("vertex/anthropic", "gcp.vertex_ai", "json_schema"),
         ("vertex/google", "gcp.vertex_ai", "json_schema"),
+        ("openai", "openai", "json_schema"),
         ("bedrock/anthropic", "aws.bedrock", "function_calling"),
     ],
 )
@@ -588,7 +589,11 @@ async def test_resolved_route_controls_all_model_roles(
         telemetry_provider=telemetry_provider,
         structured_output_method=method,
         structured_output_schema_mode=(
-            "raw_json_schema" if route_id == "vertex/google" else "pydantic"
+            "raw_json_schema"
+            if route_id == "vertex/google"
+            else "openai_strict_json_schema"
+            if route_id == "openai"
+            else "pydantic"
         ),
     )
     schema = {
@@ -632,6 +637,11 @@ async def test_resolved_route_controls_all_model_roles(
     shaping_schema = format_model.with_structured_output.call_args.args[0]
     if route.structured_output_schema_mode == "raw_json_schema":
         assert shaping_schema is schema
+    elif route.structured_output_schema_mode == "openai_strict_json_schema":
+        assert shaping_schema["name"] == "structured_output"
+        assert shaping_schema["strict"] is True
+        assert shaping_schema["schema"]["properties"]["status"] == {"type": "string"}
+        assert shaping_schema["schema"]["additionalProperties"] is False
     else:
         assert isinstance(shaping_schema, type)
     assert format_model.with_structured_output.call_args.kwargs == {
@@ -741,6 +751,132 @@ class TestJsonSchemaToPydantic:
         assert actions["items"]["properties"]["outcome"]["description"] == (
             "Whether the action succeeded"
         )
+
+    @pytest.mark.parametrize("required", [True, False])
+    @pytest.mark.parametrize("use_enum", [True, False])
+    @pytest.mark.parametrize("pattern", ["^[a-f]+$", r"^(?=[a-f]+$).+$"])
+    def test_string_constraints_reach_anthropic_tool_schema(
+        self, required: bool, use_enum: bool, pattern: str
+    ) -> None:
+        from langchain_anthropic.chat_models import convert_to_anthropic_tool
+        from pydantic import ValidationError
+
+        from lightspeed_agentic.providers.deepagents import _json_schema_to_pydantic
+
+        string_schema: dict[str, Any] = {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 4,
+            "pattern": pattern,
+        }
+        if use_enum:
+            string_schema["enum"] = ["a", "ab", "abc", "abcd", "gg"]
+        model = _json_schema_to_pydantic(
+            {
+                "type": "object",
+                "properties": {
+                    "token": string_schema,
+                    "details": {
+                        "type": "object",
+                        "properties": {"token": string_schema},
+                        "required": ["token"],
+                    },
+                    "tokens": {"type": "array", "items": string_schema},
+                },
+                "required": ["token", "details", "tokens"] if required else ["details", "tokens"],
+            }
+        )
+        tool_schema = convert_to_anthropic_tool(model)["input_schema"]
+        token_schema = tool_schema["properties"]["token"]
+        if not required:
+            token_schema = token_schema["anyOf"][0]
+        for field in (
+            token_schema,
+            tool_schema["properties"]["details"]["properties"]["token"],
+            tool_schema["properties"]["tokens"]["items"],
+        ):
+            assert field["minLength"] == 2
+            assert field["maxLength"] == 4
+            assert field["pattern"] == pattern
+            if use_enum:
+                assert field["enum"] == ["a", "ab", "abc", "abcd", "gg"]
+
+        instance = model.model_validate(
+            {"token": "ab", "details": {"token": "abcd"}, "tokens": ["abc"]}
+        )
+        assert instance.model_dump() == {
+            "token": "ab",
+            "details": {"token": "abcd"},
+            "tokens": ["abc"],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            model.model_validate({"token": "ab", "details": {"token": "a"}, "tokens": ["gg"]})
+        assert {(error["loc"], error["type"]) for error in exc_info.value.errors()} == {
+            (("details", "token"), "too_short" if use_enum else "string_too_short"),
+            (("tokens", 0), "string_pattern_mismatch"),
+        }
+        if use_enum:
+            with pytest.raises(ValidationError) as exc_info:
+                model.model_validate({"token": "ff", "details": {"token": "ab"}, "tokens": ["ab"]})
+            assert exc_info.value.errors()[0]["loc"] == ("token",)
+            assert exc_info.value.errors()[0]["type"] == "literal_error"
+
+    @pytest.mark.parametrize("required", [True, False])
+    @pytest.mark.parametrize("use_enum", [True, False])
+    @pytest.mark.parametrize(
+        ("constraints", "valid", "invalid"),
+        [
+            ({"minLength": 2}, "ab", "a"),
+            ({"maxLength": 4}, "abcd", "abcde"),
+            ({"pattern": "^[a-f]+$"}, "ab", "gg"),
+            ({"pattern": r"^(?=.{2,4}$)[a-f]+$"}, "ab", "abcde"),
+            ({"pattern": r"^([a-f])\1$"}, "aa", "ab"),
+            ({"pattern": r"(?<=prefix-)[a-f]+$"}, "prefix-ab", "prefix-gg"),
+            ({"minLength": 0, "maxLength": 0}, "", "a"),
+            (
+                {"minLength": 32, "maxLength": 32, "pattern": "^[0-9a-f]+$"},
+                "0123456789abcdef0123456789abcdef",
+                "1aefa1389b39d57d57d32a05b13b0f5cae6",
+            ),
+        ],
+    )
+    def test_string_constraints_validate_values(
+        self,
+        required: bool,
+        use_enum: bool,
+        constraints: dict[str, Any],
+        valid: str,
+        invalid: str,
+    ) -> None:
+        from langchain_anthropic.chat_models import convert_to_anthropic_tool
+        from pydantic import ValidationError
+
+        from lightspeed_agentic.providers.deepagents import _json_schema_to_pydantic
+
+        field_schema = {"type": "string", **constraints}
+        if use_enum:
+            field_schema["enum"] = [valid, invalid]
+        model = _json_schema_to_pydantic(
+            {
+                "type": "object",
+                "properties": {"token": field_schema},
+                "required": ["token"] if required else [],
+            }
+        )
+        tool_schema = convert_to_anthropic_tool(model)["input_schema"]
+        token_schema = tool_schema["properties"]["token"]
+        if not required:
+            token_schema = token_schema["anyOf"][0]
+        for keyword, value in constraints.items():
+            assert token_schema[keyword] == value
+        assert model(token=valid).token == valid
+        if not required:
+            assert model().token is None
+            assert model(token=None).token is None
+        with pytest.raises(ValidationError) as exc_info:
+            model(token=invalid)
+        assert exc_info.value.errors()[0]["loc"] == ("token",)
+        assert exc_info.value.errors()[0]["input"] == invalid
 
     def test_missing_properties_raises(self) -> None:
         from lightspeed_agentic.providers.deepagents import _json_schema_to_pydantic

@@ -68,7 +68,12 @@ belongs in unit tests.
 - **Provider matrix** — `anthropic-vertex-deepagents`, `anthropic-bedrock-deepagents`,
   `gemini-vertex-adk`, `openai-agents`; `gemini-vertex-adk` is a legacy matrix ID, but its
   Job config selects the `vertex/google` model route, which now runs through DeepAgents.
-  It does not invoke the removed ADK provider adapter. OpenAI is validated most frequently on cluster.
+  It does not invoke the removed ADK provider adapter. `openai-agents` is also a
+  retained matrix ID, not a harness selector: native OpenAI uses DeepAgents when
+  the effective endpoint is unset or HTTPS `api.openai.com`; custom/vLLM endpoints
+  retain the legacy adapter (configuration rule 3a). Record the effective endpoint
+  and selected route with live evidence; the matrix ID alone does not prove which
+  implementation ran.
   Bedrock Jobs MUST use a Bedrock model or inference profile ID (e.g.
   `global.anthropic.claude-haiku-4-5-20251001-v1:0` from `tests/e2e/config.env` as
   `ANTHROPIC_BEDROCK_MODEL`); Anthropic API shorthand such as `claude-haiku-4-5` is invalid on Bedrock.

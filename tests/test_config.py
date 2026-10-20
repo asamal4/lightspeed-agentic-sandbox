@@ -51,6 +51,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GOOGLE_CLOUD_PROJECT",
         "GOOGLE_CLOUD_LOCATION",
         "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
         "ANTHROPIC_BASE_URL",
         "AZURE_OPENAI_ENDPOINT",
         "AZURE_OPENAI_API_VERSION",
@@ -227,7 +228,11 @@ def test_vertex_llm_credentials_path_override(monkeypatch: pytest.MonkeyPatch) -
     )
 
 
-def test_vertex_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vertex_openai_resolves_legacy_settings_without_mutating_sdk_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lightspeed_agentic.config import VertexCredentialSource
+
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
     monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "openai")
@@ -237,36 +242,47 @@ def test_vertex_openai(monkeypatch: pytest.MonkeyPatch) -> None:
     model_family = resolve_model_family()
 
     assert model_family.name == "openai"
-    assert os.environ["OPENAI_MODEL"] == "gpt-4.1"
-    assert os.environ["OPENAI_BASE_URL"] == "https://vertex-openai.example.com"
-    assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == (
-        "/var/run/secrets/llm-credentials/GOOGLE_APPLICATION_CREDENTIALS"
+    assert model_family.model == "gpt-4.1"
+    assert model_family.base_url == "https://vertex-openai.example.com"
+    assert model_family.credentials == VertexCredentialSource(
+        Path("/var/run/secrets/llm-credentials/GOOGLE_APPLICATION_CREDENTIALS")
     )
+    assert "OPENAI_MODEL" not in os.environ
+    assert "OPENAI_BASE_URL" not in os.environ
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ
 
 
 def test_openai(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "openai")
     monkeypatch.setenv("LIGHTSPEED_MODEL", "gpt-4.1")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
 
     model_family = resolve_model_family()
 
     assert model_family.name == "openai"
-    assert os.environ["OPENAI_MODEL"] == "gpt-4.1"
+    assert model_family.api_key == "openai-secret"
+    assert "openai-secret" not in repr(model_family)
+    assert "OPENAI_MODEL" not in os.environ
 
 
-def test_openai_with_url(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_openai_with_url_resolves_legacy_endpoint_without_mutating_sdk_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "openai")
     monkeypatch.setenv("LIGHTSPEED_MODEL", "gpt-4.1")
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_URL", "https://custom.openai.com/v1")
 
-    resolve_model_family()
+    model_family = resolve_model_family()
 
-    assert os.environ["OPENAI_BASE_URL"] == "https://custom.openai.com/v1"
+    assert model_family.base_url == "https://custom.openai.com/v1"
+    assert "OPENAI_BASE_URL" not in os.environ
 
 
-def test_azure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_azure_resolves_legacy_settings_without_mutating_sdk_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "azure")
     monkeypatch.setenv("LIGHTSPEED_MODEL", "gpt-4.1")
@@ -277,9 +293,12 @@ def test_azure(monkeypatch: pytest.MonkeyPatch) -> None:
     model_family = resolve_model_family()
 
     assert model_family.name == "openai"
-    assert os.environ["OPENAI_MODEL"] == "gpt-4.1"
-    assert os.environ["AZURE_OPENAI_ENDPOINT"] == "https://my-resource.openai.azure.com"
-    assert os.environ["AZURE_OPENAI_API_VERSION"] == "2024-08-01-preview"
+    assert model_family.model == "gpt-4.1"
+    assert model_family.base_url == "https://my-resource.openai.azure.com"
+    assert model_family.azure_api_version == "2024-08-01-preview"
+    assert "OPENAI_MODEL" not in os.environ
+    assert "AZURE_OPENAI_ENDPOINT" not in os.environ
+    assert "AZURE_OPENAI_API_VERSION" not in os.environ
 
 
 def test_bedrock(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -724,8 +743,11 @@ def test_azure_api_key_mode_from_file(
 
     assert model_family.name == "openai"
     assert model_family.azure_credentials is None
-    assert os.environ["AZURE_OPENAI_API_KEY"] == "my-azure-key"
-    assert os.environ["AZURE_OPENAI_API_VERSION"] == "2025-03-01-preview"
+    assert model_family.azure_api_version == "2025-03-01-preview"
+    assert model_family.azure_api_key == "my-azure-key"
+    assert "my-azure-key" not in repr(model_family)
+    assert "AZURE_OPENAI_API_KEY" not in os.environ
+    assert "AZURE_OPENAI_API_VERSION" not in os.environ
 
 
 def test_azure_defaults_to_structured_output_api_version(
@@ -741,7 +763,8 @@ def test_azure_defaults_to_structured_output_api_version(
     model_family = resolve_model_family()
 
     assert model_family.name == "openai"
-    assert os.environ["AZURE_OPENAI_API_VERSION"] == "2024-08-01-preview"
+    assert model_family.azure_api_version == "2024-08-01-preview"
+    assert "AZURE_OPENAI_API_VERSION" not in os.environ
 
 
 def test_azure_api_key_mode_from_env(
@@ -757,6 +780,8 @@ def test_azure_api_key_mode_from_env(
 
     assert model_family.name == "openai"
     assert model_family.azure_credentials is None
+    assert model_family.azure_api_key == "env-key"
+    assert "env-key" not in repr(model_family)
     assert os.environ["AZURE_OPENAI_API_KEY"] == "env-key"
 
 
@@ -791,7 +816,8 @@ def test_azure_incomplete_sp_files_falls_back_to_api_key(
     model_family = resolve_model_family()
 
     assert model_family.azure_credentials is None
-    assert os.environ["AZURE_OPENAI_API_KEY"] == "fallback-key"
+    assert model_family.azure_api_key == "fallback-key"
+    assert "AZURE_OPENAI_API_KEY" not in os.environ
 
 
 def test_azure_empty_sp_file_not_entra(
@@ -809,7 +835,8 @@ def test_azure_empty_sp_file_not_entra(
     model_family = resolve_model_family()
 
     assert model_family.azure_credentials is None
-    assert os.environ["AZURE_OPENAI_API_KEY"] == "key"
+    assert model_family.azure_api_key == "key"
+    assert "AZURE_OPENAI_API_KEY" not in os.environ
 
 
 def test_azure_no_credentials_raises(

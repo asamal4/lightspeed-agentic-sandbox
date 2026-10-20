@@ -5,14 +5,13 @@ Routing happens at startup, without importing provider SDKs or creating clients.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 from lightspeed_agentic.config import (
-    DEFAULT_VERTEX_REGION,
+    ModelParameters,
     ResolvedModelFamily,
     ResolvedSDK,
     resolve_model_family,
@@ -20,17 +19,6 @@ from lightspeed_agentic.config import (
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
-
-
-@dataclass(frozen=True)
-class ModelParameters:
-    """Resolved connection/model settings; SDKs retain credential lifecycle ownership."""
-
-    model: str
-    base_url: str | None = None
-    project: str | None = None
-    region: str | None = None
-    auth_token: str | None = field(default=None, repr=False)
 
 
 ModelCreator = Callable[[ModelParameters, dict[str, Any] | None], "BaseChatModel"]
@@ -84,8 +72,8 @@ def resolve_model_route(
                 model_parameters=ModelParameters(
                     model=effective_model,
                     base_url=model_family.base_url,
-                    project=model_family.project,
-                    region=model_family.region or DEFAULT_VERTEX_REGION,
+                    provider=model_family.provider,
+                    credentials=model_family.credentials,
                 ),
                 telemetry_provider="gcp.vertex_ai",
                 structured_output_method="json_schema",
@@ -109,8 +97,8 @@ def resolve_model_route(
                         model_parameters=ModelParameters(
                             model=effective_model,
                             base_url=base_url,
-                            project=model_family.project or "",
-                            region=model_family.region or DEFAULT_VERTEX_REGION,
+                            provider=model_family.provider,
+                            credentials=model_family.credentials,
                         ),
                         telemetry_provider="gcp.vertex_ai",
                         structured_output_method="json_schema",
@@ -123,7 +111,8 @@ def resolve_model_route(
                         model_parameters=ModelParameters(
                             model=effective_model,
                             base_url=base_url,
-                            region=model_family.region or "us-east-1",
+                            provider=model_family.provider,
+                            credentials=model_family.credentials,
                         ),
                         telemetry_provider="aws.bedrock",
                         structured_output_method="function_calling",
@@ -144,7 +133,7 @@ def resolve_model_route(
                         model_parameters=ModelParameters(
                             model=effective_model,
                             base_url=base_url,
-                            auth_token=os.environ.get("ANTHROPIC_AUTH_TOKEN") or None,
+                            credentials=model_family.credentials,
                         ),
                         telemetry_provider="anthropic",
                         structured_output_method=method,

@@ -33,15 +33,20 @@ except ValueError as exc:
 else:
     raise AssertionError("legacy Gemini provider should not be registered")
 
+from pathlib import Path
 from lightspeed_agentic.config import ResolvedModelFamily
+from lightspeed_agentic.config import (
+    VertexCredentialSource,
+    VertexProviderParameters,
+)
 from lightspeed_agentic.providers.model_router import resolve_model_route
 family = ResolvedModelFamily(
     "google",
     ("GOOGLE_APPLICATION_CREDENTIALS",),
     hosting="vertex",
     model="gemini-2.5-flash",
-    project="project",
-    region="us-central1",
+    provider=VertexProviderParameters(project="project", region="us-central1"),
+    credentials=VertexCredentialSource(Path("/unused/credentials.json")),
 )
 sdk, route = resolve_model_route(model_family=family)
 assert sdk is None

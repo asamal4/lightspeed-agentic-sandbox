@@ -1,4 +1,4 @@
-"""Tests for LIGHTSPEED_* → SDK env var mapping."""
+"""Tests for provider configuration resolution."""
 
 from __future__ import annotations
 
@@ -38,6 +38,8 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "LIGHTSPEED_PROVIDER_API_VERSION",
         "LIGHTSPEED_LLM_CREDENTIALS_PATH",
         "ANTHROPIC_MODEL",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
         "GEMINI_MODEL",
         "OPENAI_MODEL",
         "CLAUDE_CODE_USE_VERTEX",
@@ -54,19 +56,54 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "AZURE_OPENAI_API_VERSION",
         "AZURE_OPENAI_API_KEY",
         "AWS_REGION",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "role_arn",
     ]:
         monkeypatch.delenv(var, raising=False)
 
 
+def test_provider_parameter_types_are_defined_in_config() -> None:
+    from lightspeed_agentic.config import (
+        AnthropicCredentialSource,
+        BedrockCredentialSource,
+        BedrockProviderParameters,
+        ModelParameters,
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
+
+    types = (
+        AnthropicCredentialSource,
+        BedrockCredentialSource,
+        BedrockProviderParameters,
+        ModelParameters,
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
+    assert all(provider_type.__module__ == config.__name__ for provider_type in types)
+
+
 def test_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lightspeed_agentic.config import AnthropicCredentialSource
+
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "anthropic")
     monkeypatch.setenv("LIGHTSPEED_MODEL", "claude-sonnet-4-20250514")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "resolved-api-key")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "resolved-auth-token")
 
     model_family = resolve_model_family()
 
     assert model_family.name == "anthropic"
-    assert os.environ["ANTHROPIC_MODEL"] == "claude-sonnet-4-20250514"
+    assert model_family.model == "claude-sonnet-4-20250514"
+    assert model_family.credentials == AnthropicCredentialSource(
+        api_key="resolved-api-key",
+        auth_token="resolved-auth-token",  # noqa: S106 - Test credential value.
+    )
+    assert "resolved-api-key" not in repr(model_family)
+    assert "resolved-auth-token" not in repr(model_family)
 
 
 def test_anthropic_with_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -75,12 +112,17 @@ def test_anthropic_with_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LIGHTSPEED_MODEL", "claude-opus-4-6")
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_URL", "https://proxy.example.com")
 
-    resolve_model_family()
+    model_family = resolve_model_family()
 
-    assert os.environ["ANTHROPIC_BASE_URL"] == "https://proxy.example.com"
+    assert model_family.base_url == "https://proxy.example.com"
 
 
 def test_vertex_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
+
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
     monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "anthropic")
@@ -91,16 +133,18 @@ def test_vertex_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
     model_family = resolve_model_family()
 
     assert model_family.name == "anthropic"
-    assert os.environ["ANTHROPIC_MODEL"] == "claude-sonnet-4-20250514"
-    assert os.environ["CLAUDE_CODE_USE_VERTEX"] == "1"
-    assert os.environ["ANTHROPIC_VERTEX_PROJECT_ID"] == "my-project"
-    assert os.environ["CLOUD_ML_REGION"] == "us-east5"
-    assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == (
-        "/var/run/secrets/llm-credentials/GOOGLE_APPLICATION_CREDENTIALS"
+    assert model_family.model == "claude-sonnet-4-20250514"
+    assert model_family.provider == VertexProviderParameters(
+        project="my-project", region="us-east5"
+    )
+    assert model_family.credentials == VertexCredentialSource(
+        credentials_file=Path("/var/run/secrets/llm-credentials/GOOGLE_APPLICATION_CREDENTIALS")
     )
 
 
 def test_vertex_anthropic_defaults_region_to_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lightspeed_agentic.config import VertexProviderParameters
+
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
     monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "anthropic")
@@ -108,11 +152,15 @@ def test_vertex_anthropic_defaults_region_to_global(monkeypatch: pytest.MonkeyPa
 
     model_family = resolve_model_family()
 
-    assert model_family.region == "global"
-    assert os.environ["CLOUD_ML_REGION"] == "global"
+    assert model_family.provider == VertexProviderParameters(project=None, region="global")
 
 
 def test_vertex_google(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
+
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
     monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "google")
@@ -124,53 +172,58 @@ def test_vertex_google(monkeypatch: pytest.MonkeyPatch) -> None:
     model_family = resolve_model_family()
 
     assert model_family.name == "google"
+    assert model_family.model == "gemini-2.5-flash"
     assert model_family.base_url == "https://vertex-proxy.example.test/custom"
-    assert os.environ["GEMINI_MODEL"] == "gemini-2.5-flash"
-    assert "GOOGLE_GENAI_USE_VERTEXAI" not in os.environ
-    assert os.environ["GOOGLE_CLOUD_PROJECT"] == "my-project"
-    assert os.environ["GOOGLE_CLOUD_LOCATION"] == "us-central1"
-    assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == (
-        "/var/run/secrets/llm-credentials/GOOGLE_APPLICATION_CREDENTIALS"
+    assert model_family.provider == VertexProviderParameters(
+        project="my-project", region="us-central1"
+    )
+    assert model_family.credentials == VertexCredentialSource(
+        credentials_file=Path("/var/run/secrets/llm-credentials/GOOGLE_APPLICATION_CREDENTIALS")
     )
 
 
-def test_vertex_google_uses_cloud_ml_region_over_google_location(
+def test_vertex_google_uses_canonical_provider_region(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from lightspeed_agentic.config import VertexProviderParameters
+
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
     monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "google")
-    monkeypatch.setenv("CLOUD_ML_REGION", "us-east5")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER_REGION", "us-east5")
+    monkeypatch.setenv("CLOUD_ML_REGION", "ignored-anthropic-region")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "ignored-google-region")
 
     model_family = resolve_model_family()
 
-    assert model_family.region == "us-east5"
-    assert os.environ["GOOGLE_CLOUD_LOCATION"] == "us-east5"
+    assert model_family.provider == VertexProviderParameters(project=None, region="us-east5")
 
 
 def test_vertex_google_defaults_region_to_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lightspeed_agentic.config import VertexProviderParameters
+
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
     monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "google")
 
     model_family = resolve_model_family()
 
-    assert model_family.region == "global"
-    assert os.environ["GOOGLE_CLOUD_LOCATION"] == "global"
+    assert model_family.provider == VertexProviderParameters(project=None, region="global")
 
 
 def test_vertex_llm_credentials_path_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lightspeed_agentic.config import VertexCredentialSource
+
     _clean_env(monkeypatch)
     creds_dir = "/var/run/secrets/e2e-llm-credentials"
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
     monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "google")
     monkeypatch.setenv("LIGHTSPEED_LLM_CREDENTIALS_PATH", creds_dir)
 
-    resolve_model_family()
+    model_family = resolve_model_family()
 
-    assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == (
-        f"{creds_dir}/GOOGLE_APPLICATION_CREDENTIALS"
+    assert model_family.credentials == VertexCredentialSource(
+        credentials_file=Path(creds_dir) / "GOOGLE_APPLICATION_CREDENTIALS"
     )
 
 
@@ -230,17 +283,138 @@ def test_azure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_bedrock(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lightspeed_agentic.config import (
+        BedrockCredentialSource,
+        BedrockProviderParameters,
+    )
+
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "bedrock")
     monkeypatch.setenv("LIGHTSPEED_MODEL", "claude-sonnet-4-20250514")
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
 
     model_family = resolve_model_family()
 
     assert model_family.name == "anthropic"
-    assert os.environ["ANTHROPIC_MODEL"] == "claude-sonnet-4-20250514"
-    assert os.environ["CLAUDE_CODE_USE_BEDROCK"] == "1"
-    assert os.environ["AWS_REGION"] == "us-east-1"
+    assert model_family.model == "claude-sonnet-4-20250514"
+    assert model_family.provider == BedrockProviderParameters(region="us-east-1")
+    assert model_family.credentials == BedrockCredentialSource(
+        access_key_id="test-access-key",
+        secret_access_key="test-secret-key",  # noqa: S106 - test credential
+    )
+
+
+def test_bedrock_region_falls_back_to_aws_region(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lightspeed_agentic.config import BedrockProviderParameters
+
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "bedrock")
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+
+    model_family = resolve_model_family()
+
+    assert model_family.provider == BedrockProviderParameters(region="eu-west-1")
+
+
+def test_bedrock_resolves_credentials_from_files_with_environment_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lightspeed_agentic.config import BedrockCredentialSource
+
+    _clean_env(monkeypatch)
+    credentials_dir = tmp_path / "llm-credentials"
+    credentials_dir.mkdir()
+    (credentials_dir / "aws_access_key_id").write_text("file-access\n", encoding="utf-8")
+    (credentials_dir / "aws_secret_access_key").write_text("file-secret\n", encoding="utf-8")
+    (credentials_dir / "aws_session_token").write_text("file-session\n", encoding="utf-8")
+    (credentials_dir / "role_arn").write_text(
+        "arn:aws:iam::123456789012:role/file-role\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "bedrock")
+    monkeypatch.setenv("LIGHTSPEED_LLM_CREDENTIALS_PATH", str(credentials_dir))
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "environment-access")
+
+    model_family = resolve_model_family()
+
+    assert model_family.credentials == BedrockCredentialSource(
+        access_key_id="environment-access",
+        secret_access_key="file-secret",  # noqa: S106 - test credential
+        session_token="file-session",  # noqa: S106 - test credential
+        role_arn="arn:aws:iam::123456789012:role/file-role",
+    )
+    assert "environment-access" not in repr(model_family)
+    assert "file-secret" not in repr(model_family)
+
+
+@pytest.mark.parametrize(
+    ("provider", "model_provider"),
+    [("anthropic", None), ("bedrock", None), ("vertex", "anthropic"), ("vertex", "google")],
+)
+def test_migrated_provider_resolution_does_not_mutate_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider: str,
+    model_provider: str | None,
+) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", provider)
+    monkeypatch.setenv("LIGHTSPEED_MODEL", "configured-model")
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER_URL", "https://provider.example.test")
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER_PROJECT", "configured-project")
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER_REGION", "us-central1")
+    monkeypatch.setenv("LIGHTSPEED_LLM_CREDENTIALS_PATH", str(tmp_path))
+    if model_provider:
+        monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", model_provider)
+
+    env_before = dict(os.environ)
+
+    resolve_model_family()
+
+    assert dict(os.environ) == env_before
+
+
+def test_vertex_google_uses_only_the_canonical_region_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lightspeed_agentic.config import VertexProviderParameters
+
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
+    monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "google")
+    monkeypatch.setenv("CLOUD_ML_REGION", "legacy-anthropic-region")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "legacy-google-region")
+
+    model_family = resolve_model_family()
+
+    assert model_family.provider == VertexProviderParameters(project=None, region="global")
+    assert os.environ["CLOUD_ML_REGION"] == "legacy-anthropic-region"
+    assert os.environ["GOOGLE_CLOUD_LOCATION"] == "legacy-google-region"
+
+
+def test_anthropic_and_gemini_ignore_legacy_model_and_endpoint_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "legacy-model")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://legacy.example.test")
+
+    anthropic_family = resolve_model_family()
+
+    assert anthropic_family.model is None
+    assert anthropic_family.base_url is None
+
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
+    monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "google")
+    monkeypatch.setenv("GEMINI_MODEL", "legacy-gemini-model")
+
+    gemini_family = resolve_model_family()
+
+    assert gemini_family.model is None
 
 
 def test_default_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -256,9 +430,9 @@ def test_default_model_not_set(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "anthropic")
 
-    resolve_model_family()
+    model_family = resolve_model_family()
 
-    assert "ANTHROPIC_MODEL" not in os.environ
+    assert model_family.model is None
 
 
 def test_vertex_missing_model_provider(monkeypatch: pytest.MonkeyPatch) -> None:

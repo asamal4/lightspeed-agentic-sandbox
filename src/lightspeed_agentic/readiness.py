@@ -6,7 +6,15 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lightspeed_agentic.config import ResolvedModelFamily, ResolvedSDK
+from lightspeed_agentic.config import (
+    AnthropicCredentialSource,
+    BedrockCredentialSource,
+    BedrockProviderParameters,
+    ResolvedModelFamily,
+    ResolvedSDK,
+    VertexCredentialSource,
+    VertexProviderParameters,
+)
 
 if TYPE_CHECKING:
     from lightspeed_agentic.providers.model_router import ResolvedModelRoute
@@ -62,20 +70,51 @@ def check_provider_env(
     return "ok"
 
 
+def _check_bedrock_credentials(source: object) -> str:
+    """Require a complete static credential pair for Bedrock, with optional role ARN."""
+    if not isinstance(source, BedrockCredentialSource):
+        return "error: missing Bedrock credential source"
+    missing = []
+    if not source.access_key_id:
+        missing.append("aws_access_key_id")
+    if not source.secret_access_key:
+        missing.append("aws_secret_access_key")
+    if missing:
+        return f"error: missing {', '.join(missing)}"
+    return "ok"
+
+
 def _check_model_route(route: ResolvedModelRoute) -> str:
     """Validate required connection settings for a resolved model route."""
     parameters = route.model_parameters
     match route.route:
+        case "anthropic":
+            if not isinstance(parameters.credentials, AnthropicCredentialSource):
+                return "error: missing credential source for anthropic"
+            if not parameters.credentials.api_key:
+                return "error: missing API key for anthropic"
+            return "ok"
         case "vertex/anthropic" | "vertex/google":
-            required = {"project": parameters.project, "region": parameters.region}
+            if not isinstance(parameters.provider, VertexProviderParameters):
+                return f"error: missing provider parameters for {route.route}"
+            required = {
+                "project": parameters.provider.project,
+                "region": parameters.provider.region,
+            }
         case "bedrock/anthropic":
-            required = {"region": parameters.region}
+            if not isinstance(parameters.provider, BedrockProviderParameters):
+                return f"error: missing provider parameters for {route.route}"
+            required = {"region": parameters.provider.region}
         case _:
             return "ok"
 
     missing = [name for name, value in required.items() if not value]
     if missing:
         return f"error: missing {', '.join(missing)} for {route.route}"
+    if route.route in {"vertex/anthropic", "vertex/google"} and not isinstance(
+        parameters.credentials, VertexCredentialSource
+    ):
+        return f"error: missing credential source for {route.route}"
     return "ok"
 
 
@@ -85,6 +124,16 @@ def run_readiness_checks(
 ) -> tuple[bool, dict[str, str]]:
     """Return overall readiness and per-check status strings."""
     checks = {"provider_env": check_provider_env(sdk.expected_envs, sdk.credential_file_envs)}
+    if isinstance(sdk, ResolvedModelFamily) and isinstance(sdk.credentials, VertexCredentialSource):
+        credential_path = sdk.credentials.credentials_file
+        if not credential_path.is_file() or read_mounted_secret(credential_path) is None:
+            checks["provider_credentials"] = (
+                f"error: credential file missing or empty: {credential_path}"
+            )
+        else:
+            checks["provider_credentials"] = "ok"
+    elif isinstance(sdk, ResolvedModelFamily) and sdk.hosting == "bedrock":
+        checks["provider_credentials"] = _check_bedrock_credentials(sdk.credentials)
     if model_route is not None:
         checks["model_route"] = _check_model_route(model_route)
     return all(status == "ok" for status in checks.values()), checks

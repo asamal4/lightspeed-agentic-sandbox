@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-    from lightspeed_agentic.providers.model_router import ModelParameters
+    from lightspeed_agentic.config import ModelParameters
 
 
 def _tls_model_class(
@@ -53,15 +53,21 @@ def create_direct_model(
     from anthropic import Anthropic, AsyncAnthropic
     from langchain_anthropic import ChatAnthropic
 
+    from lightspeed_agentic.config import AnthropicCredentialSource
+
     model_class = _tls_model_class(ChatAnthropic, Anthropic, AsyncAnthropic)
-    kwargs: dict[str, Any] = {"model": parameters.model}
+    credential_source = cast(AnthropicCredentialSource, parameters.credentials)
+    kwargs: dict[str, Any] = {
+        "model": parameters.model,
+        "api_key": credential_source.api_key,
+    }
     if parameters.base_url is not None:
         kwargs["base_url"] = parameters.base_url
     thinking = reasoning_config.get("thinking") if reasoning_config else None
     if thinking:
         kwargs["thinking"] = thinking
-    if parameters.auth_token:
-        kwargs["default_headers"] = {"Authorization": f"Bearer {parameters.auth_token}"}
+    if credential_source.auth_token:
+        kwargs["default_headers"] = {"Authorization": f"Bearer {credential_source.auth_token}"}
     return model_class(**kwargs)
 
 
@@ -69,22 +75,39 @@ def create_bedrock_model(
     parameters: ModelParameters,
     reasoning_config: dict[str, Any] | None = None,
 ) -> BaseChatModel:
-    """Construct an Anthropic Bedrock client without changing the model/profile ID."""
-    if not parameters.region:
-        raise ValueError("Bedrock requires a region")
+    """Construct an Anthropic Bedrock model with static or refreshable AWS credentials."""
+    from lightspeed_agentic.config import BedrockCredentialSource, BedrockProviderParameters
+    from lightspeed_agentic.providers.cloud_credentials import configure_bedrock_credentials
+
+    provider = cast(BedrockProviderParameters, parameters.provider)
+    credential_source = cast(BedrockCredentialSource, parameters.credentials)
 
     from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
     from langchain_aws import ChatAnthropicBedrock
+
+    client_class, async_client_class, client_kwargs, credential_kwargs = (
+        configure_bedrock_credentials(
+            credential_source,
+            provider.region,
+            AnthropicBedrock,
+            AsyncAnthropicBedrock,
+            client_kwargs={"base_url": parameters.base_url},
+        )
+    )
 
     # The integration has no stable HTTPX injection point; keep the native-client
     # override aligned with the installed Anthropic SDK.
     model_class = _tls_model_class(
         ChatAnthropicBedrock,
-        AnthropicBedrock,
-        AsyncAnthropicBedrock,
-        base_url=parameters.base_url,
+        client_class,
+        async_client_class,
+        **client_kwargs,
     )
-    kwargs: dict[str, Any] = {"model": parameters.model, "region_name": parameters.region}
+    kwargs: dict[str, Any] = {
+        "model": parameters.model,
+        "region_name": provider.region,
+        **credential_kwargs,
+    }
     thinking = reasoning_config.get("thinking") if reasoning_config else None
     if thinking:
         kwargs["thinking"] = thinking
@@ -98,19 +121,24 @@ def create_vertex_model(
     """Construct an Anthropic Vertex client for the supplied project and region."""
     from langchain_google_vertexai.model_garden import ChatAnthropicVertex
 
+    from lightspeed_agentic.config import (
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
     from lightspeed_agentic.providers.cloud_credentials import create_vertex_credentials
     from lightspeed_agentic.tls import create_async_http_client, create_http_client
 
-    credentials = create_vertex_credentials()
+    provider = cast(VertexProviderParameters, parameters.provider)
+    credential_source = cast(VertexCredentialSource, parameters.credentials)
+    credentials = create_vertex_credentials(credential_source)
     kwargs: dict[str, Any] = {
         "model_name": parameters.model,
-        "project": parameters.project,
-        "location": parameters.region,
+        "project": provider.project,
+        "location": provider.region,
         "http_client": create_http_client(),
         "async_http_client": create_async_http_client(),
     }
-    if credentials is not None:
-        kwargs["credentials"] = credentials
+    kwargs["credentials"] = credentials
     if parameters.base_url is not None:
         # Vertex SDK overrides replace its versioned default base URL entirely.
         endpoint = urlsplit(parameters.base_url)

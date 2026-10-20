@@ -24,26 +24,30 @@ flit-core==3.12.0
     #   jeepney
     #   markdown-it-py
     #   mdurl
-    #   more-itertools
 flit-core==4.1.0
     # via
     #   idna
+    #   more-itertools
     #   packaging
     #   pathspec
     #   pyproject-metadata
     #   wheel
 hatch-fancy-pypi-readme==25.1.0
-    # via anthropic
+    # via
+    #   anthropic
+    #   langsmith
 hatch-vcs==0.5.0
     # via urllib3
 hatchling==1.26.3
     # via
     #   anthropic
     #   hatch-fancy-pypi-readme
+    #   langsmith
 hatchling==1.32.4
     # via
     #   hatch-fancy-pypi-readme
     #   hatch-vcs
+    #   langchain
     #   langchain-anthropic
     #   langchain-aws
     #   langchain-core
@@ -75,7 +79,7 @@ meson-python==0.22.1
     # via numpy
 meson==1.12.1
     # via meson-python
-more-itertools==11.1.0
+more-itertools==11.2.1
     # via
     #   jaraco-classes
     #   jaraco-functools
@@ -83,9 +87,9 @@ pathspec==1.1.1
     # via hatchling
 pdm-backend==2.5.0
     # via langchain-mcp-adapters
-pkginfo==1.13
+pkginfo==1.13.3
     # via google-genai
-pluggy==1.6.0
+pluggy==1.7.0
     # via hatchling
 poetry-core==2.5.0
     # via
@@ -119,7 +123,7 @@ setuptools-scm==10.3.4
     #   setuptools-rust
     #   twine
     #   urllib3
-tomlkit==0.15.1
+tomlkit==0.15.2
     # via hatchling
 trove-classifiers==2026.9.21.13
     # via hatchling
@@ -139,17 +143,17 @@ wheel==0.48.0
     #   authlib
     #   deepagents
     #   google-genai
-    #   pycparser
 
 # The following packages are considered to be unsafe in a requirements file:
 setuptools==84.0.0
+    # via charset-normalizer
+setuptools==84.2.0
     # via
     #   authlib
     #   bottleneck
     #   calver
     #   certifi
     #   cffi
-    #   charset-normalizer
     #   cryptography
     #   deepagents
     #   google-cloud-bigquery

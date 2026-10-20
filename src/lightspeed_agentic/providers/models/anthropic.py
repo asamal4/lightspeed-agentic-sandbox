@@ -96,15 +96,12 @@ def create_vertex_model(
     reasoning_config: dict[str, Any] | None = None,
 ) -> BaseChatModel:
     """Construct an Anthropic Vertex client for the supplied project and region."""
-    if not parameters.project:
-        raise ValueError("Vertex requires a project")
-    if not parameters.region:
-        raise ValueError("Vertex requires a region")
-
     from langchain_google_vertexai.model_garden import ChatAnthropicVertex
 
+    from lightspeed_agentic.providers.cloud_credentials import create_vertex_credentials
     from lightspeed_agentic.tls import create_async_http_client, create_http_client
 
+    credentials = create_vertex_credentials()
     kwargs: dict[str, Any] = {
         "model_name": parameters.model,
         "project": parameters.project,
@@ -112,6 +109,8 @@ def create_vertex_model(
         "http_client": create_http_client(),
         "async_http_client": create_async_http_client(),
     }
+    if credentials is not None:
+        kwargs["credentials"] = credentials
     if parameters.base_url is not None:
         # Vertex SDK overrides replace its versioned default base URL entirely.
         endpoint = urlsplit(parameters.base_url)

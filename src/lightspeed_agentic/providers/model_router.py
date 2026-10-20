@@ -1,4 +1,4 @@
-"""Resolve Anthropic model construction or return an unmigrated adapter's SDK config.
+"""Resolve model construction or return an unmigrated adapter's SDK config.
 
 Routing happens at startup, without importing provider SDKs or creating clients.
 """
@@ -11,8 +11,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
-from lightspeed_agentic.config import ResolvedModelFamily, ResolvedSDK, resolve_model_family
-from lightspeed_agentic.types import DEFAULT_MODEL
+from lightspeed_agentic.config import (
+    DEFAULT_VERTEX_REGION,
+    ResolvedModelFamily,
+    ResolvedSDK,
+    resolve_model_family,
+)
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -42,6 +46,7 @@ class ResolvedModelRoute:
     model_parameters: ModelParameters = field(repr=False)
     telemetry_provider: str
     structured_output_method: Literal["function_calling", "json_schema"]
+    structured_output_schema_mode: Literal["pydantic", "raw_json_schema"] = "pydantic"
 
 
 def resolve_model_route(
@@ -49,23 +54,43 @@ def resolve_model_route(
     *,
     model_family: ResolvedModelFamily | None = None,
 ) -> tuple[ResolvedSDK, None] | tuple[None, ResolvedModelRoute]:
-    """Return (sdk, None) for legacy adapters or (None, model_route) for Anthropic.
+    """Return SDK config for legacy adapters or a typed route for migrated models.
 
-    Anthropic model precedence is an explicit override, the resolved family model,
-    then the default. Legacy callers retain their existing model resolution. Model
-    clients remain unconstructed; readiness is checked by the caller.
+    Route model precedence is an explicit override, then the resolved family model.
+    Every model family must resolve a model; model clients remain unconstructed and
+    readiness is checked by the caller.
     """
     if model_family is None:
         model_family = resolve_model_family()
+    effective_model = model or model_family.model
+    if not effective_model:
+        raise ValueError(f"No model configured for {model_family.name}")
     match model_family.name:
-        case "openai" | "google":
+        case "openai":
             return ResolvedSDK(
-                name="gemini" if model_family.name == "google" else "openai",
+                name="openai",
                 expected_envs=model_family.expected_envs,
                 credential_file_envs=model_family.credential_file_envs,
                 azure_auth_mode=model_family.azure_auth_mode,
                 azure_credentials=model_family.azure_credentials,
             ), None
+        case "google":
+            from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
+
+            return None, ResolvedModelRoute(
+                route="vertex/google",
+                model=effective_model,
+                create_model=create_vertex_gemini_model,
+                model_parameters=ModelParameters(
+                    model=effective_model,
+                    base_url=model_family.base_url,
+                    project=model_family.project,
+                    region=model_family.region or DEFAULT_VERTEX_REGION,
+                ),
+                telemetry_provider="gcp.vertex_ai",
+                structured_output_method="json_schema",
+                structured_output_schema_mode="raw_json_schema",
+            )
         case "anthropic":
             from lightspeed_agentic.providers.models.anthropic import (
                 create_bedrock_model,
@@ -74,7 +99,6 @@ def resolve_model_route(
             )
 
             # The family snapshots model and host settings; explicit route overrides win.
-            effective_model = model or model_family.model or DEFAULT_MODEL
             base_url = model_family.base_url
             match model_family.hosting:
                 case "vertex":
@@ -86,7 +110,7 @@ def resolve_model_route(
                             model=effective_model,
                             base_url=base_url,
                             project=model_family.project or "",
-                            region=model_family.region or "us-east5",
+                            region=model_family.region or DEFAULT_VERTEX_REGION,
                         ),
                         telemetry_provider="gcp.vertex_ai",
                         structured_output_method="json_schema",
@@ -104,8 +128,8 @@ def resolve_model_route(
                         telemetry_provider="aws.bedrock",
                         structured_output_method="function_calling",
                     )
-                case "anthropic":
-                    # Direct Anthropic.
+                case _:
+                    # Configuration guarantees the remaining hosting is direct Anthropic.
                     method: Literal["function_calling", "json_schema"] = "function_calling"
                     if (
                         base_url
@@ -124,8 +148,4 @@ def resolve_model_route(
                         ),
                         telemetry_provider="anthropic",
                         structured_output_method=method,
-                    )
-                case "openai" | "azure":
-                    raise ValueError(
-                        f"Unsupported hosting provider for Anthropic: {model_family.hosting}"
                     )

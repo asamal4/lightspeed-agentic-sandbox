@@ -281,6 +281,43 @@ class TestLoadBatchE2EConfig:
         }
         assert config.llm_secret == resolve_llm_secret("anthropic-vertex-deepagents")
 
+    @pytest.mark.parametrize(
+        ("google_location", "cloud_ml_region", "expected_region"),
+        [
+            ("us-central1", "us-east5", "us-east5"),
+            (None, "us-east5", "us-east5"),
+            ("us-central1", None, "us-central1"),
+            (None, None, None),
+        ],
+    )
+    def test_gemini_vertex_forwards_configured_region_without_inventing_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        google_location: str | None,
+        cloud_ml_region: str | None,
+        expected_region: str | None,
+    ) -> None:
+        monkeypatch.setenv("E2E_PROVIDER", "gemini-vertex-adk")
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "my-gcp-project")
+        if google_location is None:
+            monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+        else:
+            monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", google_location)
+        if cloud_ml_region is None:
+            monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
+        else:
+            monkeypatch.setenv("CLOUD_ML_REGION", cloud_ml_region)
+
+        config = load_batch_e2e_config()
+
+        expected_env = {
+            "LIGHTSPEED_MODEL_PROVIDER": "google",
+            "LIGHTSPEED_PROVIDER_PROJECT": "my-gcp-project",
+        }
+        if expected_region is not None:
+            expected_env["LIGHTSPEED_PROVIDER_REGION"] = expected_region
+        assert config.extra_env == expected_env
+
     def test_anthropic_bedrock_maps_to_bedrock_provider(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

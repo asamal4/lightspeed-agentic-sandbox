@@ -539,6 +539,7 @@ async def test_close_model_clients_closes_only_initialized_clients() -> None:
         ("anthropic", "anthropic", "function_calling"),
         ("anthropic", "anthropic", "json_schema"),
         ("vertex/anthropic", "gcp.vertex_ai", "json_schema"),
+        ("vertex/google", "gcp.vertex_ai", "json_schema"),
         ("bedrock/anthropic", "aws.bedrock", "function_calling"),
     ],
 )
@@ -586,11 +587,26 @@ async def test_resolved_route_controls_all_model_roles(
         route=route_id,
         telemetry_provider=telemetry_provider,
         structured_output_method=method,
+        structured_output_schema_mode=(
+            "raw_json_schema" if route_id == "vertex/google" else "pydantic"
+        ),
     )
     schema = {
         "type": "object",
-        "properties": {"status": {"type": "string"}},
+        "properties": {
+            "status": {"type": "string"},
+            "reference": {"$ref": "#/$defs/Reference"},
+            "variant": {"oneOf": [{"type": "string"}, {"type": "integer"}]},
+        },
         "required": ["status"],
+        "$defs": {
+            "Reference": {
+                "type": "object",
+                "properties": {"enabled": {"type": "boolean"}},
+            }
+        },
+        "allOf": [{"type": "object"}],
+        "additionalProperties": False,
     }
 
     with _patch_sys_modules(_mock_deepagents_modules(create_agent, MagicMock())):
@@ -613,6 +629,11 @@ async def test_resolved_route_controls_all_model_roles(
     assert create_agent.call_args.kwargs["model"] is main_model
     assert "response_format" not in create_agent.call_args.kwargs
     format_model.with_structured_output.assert_called_once()
+    shaping_schema = format_model.with_structured_output.call_args.args[0]
+    if route.structured_output_schema_mode == "raw_json_schema":
+        assert shaping_schema is schema
+    else:
+        assert isinstance(shaping_schema, type)
     assert format_model.with_structured_output.call_args.kwargs == {
         "method": method,
         "include_raw": True,

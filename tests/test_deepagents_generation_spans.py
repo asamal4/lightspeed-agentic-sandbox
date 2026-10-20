@@ -208,11 +208,12 @@ def _partial_response_model(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("route_id", "telemetry_provider"),
+    ("route_id", "telemetry_provider", "structured_output_method"),
     [
-        ("anthropic", "anthropic"),
-        ("vertex/anthropic", "gcp.vertex_ai"),
-        ("bedrock/anthropic", "aws.bedrock"),
+        ("anthropic", "anthropic", "function_calling"),
+        ("vertex/anthropic", "gcp.vertex_ai", "json_schema"),
+        ("vertex/google", "gcp.vertex_ai", "json_schema"),
+        ("bedrock/anthropic", "aws.bedrock", "function_calling"),
     ],
 )
 async def test_run_agent_query_traces_main_generations_and_raw_shape_response(
@@ -221,6 +222,7 @@ async def test_run_agent_query_traces_main_generations_and_raw_shape_response(
     tmp_path: Path,
     route_id: str,
     telemetry_provider: str,
+    structured_output_method: str,
 ) -> None:
     from opentelemetry.trace import SpanKind
 
@@ -235,6 +237,10 @@ async def test_run_agent_query_traces_main_generations_and_raw_shape_response(
         make_model_route(Mock(return_value=model), model="claude-trace-test"),
         route=route_id,
         telemetry_provider=telemetry_provider,
+        structured_output_method=structured_output_method,
+        structured_output_schema_mode=(
+            "raw_json_schema" if route_id == "vertex/google" else "pydantic"
+        ),
     )
 
     result = await run_agent_query(
@@ -242,6 +248,7 @@ async def test_run_agent_query_traces_main_generations_and_raw_shape_response(
         prompt="Summarize the deployment status using a subagent.",
         system_prompt="Follow instructions.",
         output_schema={
+            "title": "OutputModel",
             "type": "object",
             "properties": {"status": {"type": "string"}},
             "required": ["status"],

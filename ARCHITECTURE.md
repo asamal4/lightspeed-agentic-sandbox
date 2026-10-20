@@ -60,8 +60,12 @@ graph TD
 
     subgraph "Provider Adapters"
         DeepAgentsP["deepagents.py"]
-        GeminiP["gemini.py"]
         OpenAIP["openai.py"]
+    end
+
+    subgraph "DeepAgents Model Integrations"
+        AnthropicModel["models/anthropic.py"]
+        GeminiModel["models/gemini.py"]
     end
 
     Batch --> Config
@@ -76,9 +80,11 @@ graph TD
     RunAgent --> MCP
     RunAgent --> Audit
     RunAgent --> Metrics
-    Factory -->|lazy import| DeepAgentsP
-    Factory -->|lazy import| GeminiP
-    Factory -->|lazy import| OpenAIP
+    Factory -->|route-driven| DeepAgentsP
+    Factory -->|legacy OpenAI path| OpenAIP
+    ModelRouter -->|ResolvedModelRoute| DeepAgentsP
+    DeepAgentsP -->|route constructor| AnthropicModel
+    DeepAgentsP -->|route constructor| GeminiModel
 ```
 
 ## Batch Run Flow
@@ -122,20 +128,20 @@ Result CR lifecycle uses the **`kubernetes` Python client** (`CustomObjectsApi`)
 
 Each adapter is a thin wrapper. The SDK owns tool execution, skill discovery, and multi-turn orchestration. Adapters map SDK events to normalized `ProviderEvent` objects and extract token usage.
 
-| Provider | SDK | Structured Output | Skills | Tools |
+| Harness | Model integrations | Structured Output | Skills | Tools |
 |---|---|---|---|---|
-| DeepAgents | `deepagents` + Anthropic LangChain integrations | Tool-free second pass without thinking; method supplied by the model route | `/skills/` virtual `CompositeBackend` route when skills exist | `LocalShellBackend` (default) + `/skills/` `FilesystemBackend` route + MCP tools |
-| Gemini | `google-adk` | Response schema on content config | `SkillToolset` from directory | `ExecuteBashTool` + web tools |
-| OpenAI | `openai-agents` | `output_type` wrapper | `Skills` capability | `SandboxAgent` shell/filesystem |
+| DeepAgents | Anthropic direct, Bedrock, and Vertex; Gemini on Vertex via `langchain-google-genai` | Tool-free second pass without thinking; method supplied by the model route | `/skills/` virtual `CompositeBackend` route when skills exist | `LocalShellBackend` (default) + `/skills/` `FilesystemBackend` route + MCP tools |
+| OpenAI | OpenAI and Azure OpenAI | `output_type` wrapper | `Skills` capability | `SandboxAgent` shell/filesystem |
 
 Batch resolves the model family once and reuses it for routing and credential
-readiness. Anthropic routing returns a `ResolvedModelRoute` with the selected model,
-a typed constructor and parameters, telemetry identity, and structured-output method.
-The factory injects this route into `DeepAgentsProvider`; the provider creates fresh
-main, inspection-classifier, and output-shaping models through it. Only the main
-model receives query reasoning. Explicit direct, Vertex, and Bedrock constructors
-live in `providers/models/anthropic.py` and retain lazy SDK imports and shared TLS.
-Gemini and OpenAI still return legacy SDK configuration and use their existing adapters.
+readiness. Anthropic and Vertex/Google routing return a `ResolvedModelRoute` with
+the selected model, typed constructor parameters, telemetry identity, and
+structured-output method. The factory injects this route into `DeepAgentsProvider`;
+the provider creates fresh main, inspection-classifier, and output-shaping models
+through it. Only the main model receives query reasoning. Anthropic constructors
+live in `providers/models/anthropic.py`; the Vertex Gemini constructor lives in
+`providers/models/gemini.py`. Both integrations retain lazy SDK imports and shared
+TLS. OpenAI remains on its legacy SDK configuration and adapter path.
 
 DeepAgents exposes skills at virtual `/skills/` paths and relies on its SDK
 middleware to provide the corresponding host paths to shell commands. Scripts
@@ -176,7 +182,7 @@ The container runs as non-root user `agent`. `catatonit` is PID 1. The batch mod
 
 ## Key Decisions
 
-- **One provider per pod:** Selected at startup through `config.resolve_model_family()` and `providers.model_router.resolve_model_route()`. Anthropic receives an explicit DeepAgents model route; Gemini/OpenAI retain legacy adapter dispatch.
+- **One provider per pod:** Selected at startup through `config.resolve_model_family()` and `providers.model_router.resolve_model_route()`. Anthropic and Vertex/Google receive an explicit DeepAgents model route; OpenAI retains legacy adapter dispatch.
 
 - **Thin adapters:** Provider modules map SDK events to a normalized union type; they do not re-implement SDK behavior.
 

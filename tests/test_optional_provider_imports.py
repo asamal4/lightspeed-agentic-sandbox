@@ -8,12 +8,12 @@ import sys
 from pathlib import Path
 
 
-def test_batch_and_non_deepagents_providers_import_without_deepagents_extras() -> None:
+def test_gemini_route_is_lazy_and_legacy_provider_is_absent() -> None:
     project_root = Path(__file__).resolve().parents[1]
     script = r"""
 import builtins
 
-blocked = ("deepagents", "langchain", "langgraph")
+blocked = ("deepagents", "langchain", "langgraph", "langchain_google_genai")
 original_import = builtins.__import__
 
 def guarded_import(name, *args, **kwargs):
@@ -25,8 +25,27 @@ builtins.__import__ = guarded_import
 import lightspeed_agentic.batch
 from lightspeed_agentic.factory import create_provider
 
-assert create_provider("gemini").name == "gemini"
 assert create_provider("openai").name == "openai"
+try:
+    create_provider("gemini")
+except ValueError as exc:
+    assert "Unknown provider" in str(exc)
+else:
+    raise AssertionError("legacy Gemini provider should not be registered")
+
+from lightspeed_agentic.config import ResolvedModelFamily
+from lightspeed_agentic.providers.model_router import resolve_model_route
+family = ResolvedModelFamily(
+    "google",
+    ("GOOGLE_APPLICATION_CREDENTIALS",),
+    hosting="vertex",
+    model="gemini-2.5-flash",
+    project="project",
+    region="us-central1",
+)
+sdk, route = resolve_model_route(model_family=family)
+assert sdk is None
+assert route is not None and route.route == "vertex/google"
 """
     env = os.environ.copy()
     env["PYTHONPATH"] = str(project_root / "src")

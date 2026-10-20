@@ -16,11 +16,11 @@ These specs define the behavioral rules and codebase navigation for the lightspe
 |------|-------------|
 | [system-overview.md](what/system-overview.md) | System role, component inventory, lifecycle, integration boundaries |
 | [run-api.md](what/run-api.md) | Batch entrypoint: `/input/` files, agent run, Result CR publishing, context prefix, timeouts |
-| [provider-contract.md](what/provider-contract.md) | AgentProvider ABC, event model, structured output, thin-adapter principle, skills delegation; [PLANNED: OLS-4434] single-DeepAgents target and verification gates |
+| [provider-contract.md](what/provider-contract.md) | AgentProvider ABC, event model, structured output, thin-adapter principle, skills delegation; DeepAgents routes and remaining OpenAI migration target |
 | [configuration.md](what/configuration.md) | Environment variables, provider selection, model resolution, container layout, build system |
 | [health-probes.md](what/health-probes.md) | Readiness checks at batch startup (R1); HTTP probes superseded |
-| [audit-logging.md](what/audit-logging.md) | OTel GenAI invocation/generation/tool spans, legacy choice events, and audit-log projections |
-| [data-collection.md](what/data-collection.md) | Three-provider GenAI invocation/tool/generation profile and exact `gcp.vertex.agent` exclusion from stdout/OTLP trace exports |
+| [audit-logging.md](what/audit-logging.md) | OTel GenAI invocation, tool, and generation spans; legacy choice events and audit-log projections |
+| [data-collection.md](what/data-collection.md) | Three model-family GenAI invocation/tool/generation profile and exact `gcp.vertex.agent` exclusion from stdout/OTLP trace exports |
 | [e2e-testing.md](what/e2e-testing.md) | Batch cluster BDD harness: OpenShift Jobs, fixtures, live vs unit split |
 
 ### how/ — Architecture Specifications
@@ -36,7 +36,7 @@ These specs define the behavioral rules and codebase navigation for the lightspe
 |---|---|
 | [0001-tool-output-boundary.md](decisions/0001-tool-output-boundary.md) | DeepAgents-only SAFE-02 boundaries, trust instruction, and model/event separation |
 | [0002-sdk-native-skills-route.md](decisions/0002-sdk-native-skills-route.md) | DeepAgents virtual `/skills/` route and SDK-provided host-path mapping for native shell execution (OLS-4413) |
-| [0003-single-deepagents-harness.md](decisions/0003-single-deepagents-harness.md) | [PLANNED: OLS-4434] one DeepAgents harness for all existing model routes, native tools/skills, shared safety, compatibility and retirement gates |
+| [0003-single-deepagents-harness.md](decisions/0003-single-deepagents-harness.md) | Historical OLS-4434 decision for consolidating model routes on DeepAgents; Anthropic and Vertex/Google use it, while OpenAI migration remains |
 
 ## Scope
 
@@ -53,7 +53,7 @@ AI agents. Content is optimized for precision and machine consumption.
 | Understand the system | `what/system-overview.md` |
 | Understand the batch entrypoint | `what/run-api.md` |
 | Add or modify a provider | `what/provider-contract.md` + `how/provider-architecture.md` |
-| Consolidate providers on DeepAgents | [PLANNED: OLS-4434] `what/provider-contract.md` rules 50–67 + `decisions/0003-single-deepagents-harness.md` |
+| Understand the DeepAgents migration and remaining target | `what/provider-contract.md` rules 50–67 + `decisions/0003-single-deepagents-harness.md` |
 | Understand DeepAgents tool-output boundaries | `what/provider-contract.md` (SAFE-02) + `decisions/0001-tool-output-boundary.md` |
 | Understand DeepAgents skill execution | `what/provider-contract.md` (rules 23, 33, 36) + `decisions/0002-sdk-native-skills-route.md` |
 | Understand env vars and deployment | `what/configuration.md` |
@@ -87,6 +87,6 @@ AI agents. Content is optimized for precision and machine consumption.
 
 ## Project Context
 
-This is the agent runtime that runs inside ephemeral sandbox pods. The operator mounts input files at `/input/`, starts the batch container, and reads the Result CR and pod exit status. The runtime wraps multiple LLM provider SDKs (DeepAgents, Gemini, OpenAI) behind a single interface. Result CR publishing uses the Kubernetes Python client, not `oc`.
+This is the agent runtime that runs inside ephemeral sandbox pods. The operator mounts input files at `/input/`, starts the batch container, and reads the Result CR and pod exit status. Anthropic and Vertex Gemini use the shared DeepAgents harness; OpenAI retains its legacy provider adapter. Result CR publishing uses the Kubernetes Python client, not `oc`.
 
 Jira tracking: Feature OCPSTRAT-3095, Epic OLS-2894.

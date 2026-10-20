@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from lightspeed_agentic.config import resolve_router_model, resolve_startup_model
-from lightspeed_agentic.types import DEFAULT_MODEL
 
 
 def test_resolve_router_model_prefers_explicit_model() -> None:
@@ -54,10 +53,11 @@ def test_resolve_router_model_falls_back_to_lightspeed_model(
     assert resolve_router_model("openai") == "gpt-5-mini"
 
 
-def test_resolve_router_model_uses_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_router_model_requires_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
     monkeypatch.delenv("LIGHTSPEED_MODEL", raising=False)
-    assert resolve_router_model("openai") == DEFAULT_MODEL
+    with pytest.raises(ValueError, match="No model configured"):
+        resolve_router_model("openai")
 
 
 def test_resolve_router_model_raises_for_unknown_provider() -> None:

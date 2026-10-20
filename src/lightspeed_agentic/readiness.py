@@ -66,7 +66,7 @@ def _check_model_route(route: ResolvedModelRoute) -> str:
     """Validate required connection settings for a resolved model route."""
     parameters = route.model_parameters
     match route.route:
-        case "vertex/anthropic":
+        case "vertex/anthropic" | "vertex/google":
             required = {"project": parameters.project, "region": parameters.region}
         case "bedrock/anthropic":
             required = {"region": parameters.region}

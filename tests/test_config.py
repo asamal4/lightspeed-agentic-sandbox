@@ -100,6 +100,18 @@ def test_vertex_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_vertex_anthropic_defaults_region_to_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
+    monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "anthropic")
+    monkeypatch.setenv("LIGHTSPEED_MODEL", "claude-sonnet-4-20250514")
+
+    model_family = resolve_model_family()
+
+    assert model_family.region == "global"
+    assert os.environ["CLOUD_ML_REGION"] == "global"
+
+
 def test_vertex_google(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
@@ -107,17 +119,45 @@ def test_vertex_google(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LIGHTSPEED_MODEL", "gemini-2.5-flash")
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_PROJECT", "my-project")
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_REGION", "us-central1")
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER_URL", "https://vertex-proxy.example.test/custom")
 
     model_family = resolve_model_family()
 
     assert model_family.name == "google"
+    assert model_family.base_url == "https://vertex-proxy.example.test/custom"
     assert os.environ["GEMINI_MODEL"] == "gemini-2.5-flash"
-    assert os.environ["GOOGLE_GENAI_USE_VERTEXAI"] == "true"
+    assert "GOOGLE_GENAI_USE_VERTEXAI" not in os.environ
     assert os.environ["GOOGLE_CLOUD_PROJECT"] == "my-project"
     assert os.environ["GOOGLE_CLOUD_LOCATION"] == "us-central1"
     assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == (
         "/var/run/secrets/llm-credentials/GOOGLE_APPLICATION_CREDENTIALS"
     )
+
+
+def test_vertex_google_uses_cloud_ml_region_over_google_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
+    monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "google")
+    monkeypatch.setenv("CLOUD_ML_REGION", "us-east5")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+
+    model_family = resolve_model_family()
+
+    assert model_family.region == "us-east5"
+    assert os.environ["GOOGLE_CLOUD_LOCATION"] == "us-east5"
+
+
+def test_vertex_google_defaults_region_to_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
+    monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "google")
+
+    model_family = resolve_model_family()
+
+    assert model_family.region == "global"
+    assert os.environ["GOOGLE_CLOUD_LOCATION"] == "global"
 
 
 def test_vertex_llm_credentials_path_override(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -21,13 +21,17 @@ def test_create_provider_requires_name():
 
 
 def test_create_provider_explicit_name():
-    # SDK might not be installed — just verify the right import is attempted
-    for name in ("gemini", "openai"):
-        try:
-            provider = create_provider(name)
-            assert provider.name == name
-        except ImportError:
-            pass
+    # SDK might not be installed — just verify the right import is attempted.
+    try:
+        provider = create_provider("openai")
+        assert provider.name == "openai"
+    except ImportError:
+        pass
+
+
+def test_legacy_gemini_provider_is_removed():
+    with pytest.raises(ValueError, match="Supported: deepagents, openai"):
+        create_provider("gemini")
 
 
 def test_deepagents_provider_receives_resolved_route():

@@ -449,7 +449,10 @@ class OpenAIProvider(AgentProvider):
             if credential is not None:
                 result = credential.close()
                 if inspect.isawaitable(result):
-                    await result
+                    try:
+                        await result
+                    except BaseException:
+                        pass
 
     @property
     def name(self) -> str:

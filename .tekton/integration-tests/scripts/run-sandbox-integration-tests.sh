@@ -113,12 +113,12 @@ case "${PROVIDER}" in
         export AZURE_OPENAI_MODEL
         AZURE_OPENAI_MODEL="$(tr -d '[:space:]' < "${CRED_DIR}/model")"
     fi
-    export AZURE_OPENAI_MODEL="${AZURE_OPENAI_MODEL:-gpt-4o}"
+    export AZURE_OPENAI_MODEL="${AZURE_OPENAI_MODEL:-gpt-6-luna}"
     if [ -z "${LIGHTSPEED_PROVIDER_API_VERSION:-}" ] && [ -f "${CRED_DIR}/api_version" ]; then
         export LIGHTSPEED_PROVIDER_API_VERSION
         LIGHTSPEED_PROVIDER_API_VERSION="$(tr -d '[:space:]' < "${CRED_DIR}/api_version")"
     fi
-    export LIGHTSPEED_PROVIDER_API_VERSION="${LIGHTSPEED_PROVIDER_API_VERSION:-2025-03-01-preview}"
+    export LIGHTSPEED_PROVIDER_API_VERSION="${LIGHTSPEED_PROVIDER_API_VERSION:-2025-04-01-preview}"
     export LIGHTSPEED_PROVIDER_URL="${AZURE_OPENAI_ENDPOINT}"
     ;;
   *)

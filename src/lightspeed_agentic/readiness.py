@@ -88,6 +88,14 @@ def _check_model_route(route: ResolvedModelRoute) -> str:
     """Validate required connection settings for a resolved model route."""
     parameters = route.model_parameters
     match route.route:
+        case "openai" | "openai-compatible":
+            if not parameters.api_key or not parameters.api_key.strip():
+                return f"error: missing API key for {route.route}"
+            if route.route == "openai-compatible" and (
+                not parameters.base_url or not parameters.base_url.strip()
+            ):
+                return "error: missing base URL for openai-compatible"
+            return "ok"
         case "anthropic":
             if not isinstance(parameters.credentials, AnthropicCredentialSource):
                 return "error: missing credential source for anthropic"

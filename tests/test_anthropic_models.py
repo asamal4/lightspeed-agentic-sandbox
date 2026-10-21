@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import ssl
 import subprocess
@@ -395,6 +396,108 @@ async def test_vertex_requests_preserve_api_version_and_explicit_paths(
         "publishers/anthropic/models/claude-sonnet-4-6@20260217:rawPredict"
     )
     assert [str(request.url) for request in requests] == [expected_url, expected_url]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hosting", ["direct", "bedrock", "vertex"])
+@pytest.mark.parametrize("max_output_tokens", [None, 128], ids=["sdk-default", "classifier-limit"])
+async def test_classifier_output_budget_reaches_anthropic_http_request(
+    monkeypatch: pytest.MonkeyPatch,
+    hosting: str,
+    max_output_tokens: int | None,
+) -> None:
+    from lightspeed_agentic.config import (
+        AnthropicCredentialSource,
+        BedrockCredentialSource,
+        BedrockProviderParameters,
+        ModelParameters,
+        VertexCredentialSource,
+        VertexProviderParameters,
+    )
+    from lightspeed_agentic.inspection.client import LangChainClassifierClient
+    from lightspeed_agentic.inspection.models import ClassifierRequest
+    from lightspeed_agentic.providers.models import anthropic as anthropic_models
+
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_classifier",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call_decision",
+                        "name": "ClassifierDecision",
+                        "input": {"injectionDetected": False, "category": "none"},
+                    }
+                ],
+                "stop_reason": "tool_use",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 13},
+            },
+        )
+
+    transport = httpx.MockTransport(respond)
+    with httpx.Client(transport=transport) as sync_client:
+        async with httpx.AsyncClient(transport=transport) as async_client:
+            monkeypatch.setattr(tls, "create_http_client", lambda: sync_client)
+            monkeypatch.setattr(tls, "create_async_http_client", lambda: async_client)
+            if hosting == "direct":
+                model = anthropic_models.create_direct_model(
+                    ModelParameters(
+                        model="claude-sonnet-4-6",
+                        credentials=AnthropicCredentialSource(api_key="test-api-key"),
+                        max_output_tokens=max_output_tokens,
+                    )
+                )
+            elif hosting == "bedrock":
+                model = anthropic_models.create_bedrock_model(
+                    ModelParameters(
+                        model="global.anthropic.claude-haiku-4-5-20251001-v1:0",
+                        provider=BedrockProviderParameters(region="us-west-2"),
+                        credentials=BedrockCredentialSource(
+                            access_key_id="test-access-key",
+                            secret_access_key="test-secret-key",  # noqa: S106 - test credential
+                        ),
+                        max_output_tokens=max_output_tokens,
+                    )
+                )
+            else:
+                model = anthropic_models.create_vertex_model(
+                    ModelParameters(
+                        model="claude-sonnet-4-6@20260217",
+                        provider=VertexProviderParameters(
+                            project="test-project", region="us-east5"
+                        ),
+                        credentials=VertexCredentialSource(Path("/unused/credentials.json")),
+                        max_output_tokens=max_output_tokens,
+                    )
+                )
+                model.async_client.access_token = "test-token"  # noqa: S105 - offline SDK credential
+            decision = await LangChainClassifierClient(model).classify(
+                ClassifierRequest(
+                    toolName="probe",
+                    resultType="result",
+                    chunkIndex=0,
+                    chunkCount=1,
+                    content="safe",
+                )
+            )
+
+    assert decision.injection_detected is False
+    assert len(requests) == 1
+    body = json.loads(requests[0].content)
+    if max_output_tokens is None:
+        assert body["max_tokens"] > 128  # Keep the SDK's model-profile default.
+    else:
+        assert body["max_tokens"] == 128
+    assert not {"max_output_tokens", "max_completion_tokens"} & body.keys()
 
 
 def test_module_import_does_not_load_optional_provider_sdks() -> None:

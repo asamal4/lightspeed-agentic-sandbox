@@ -12,6 +12,7 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncIterator, Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 from uuid import UUID
 
@@ -399,17 +400,17 @@ async def _shape_structured_output(
     from langchain_core.messages import HumanMessage, SystemMessage
 
     format_model = model_route.create_model(model_route.model_parameters, None)
-    if model_route.structured_output_schema_mode == "openai_strict_json_schema":
-        from lightspeed_agentic.providers.models.openai import (
-            native_openai_structured_output_schema,
+    validation_schema = schema
+    if model_route.translate_output_schema is not None:
+        schema = model_route.translate_output_schema(schema)
+    if model_route.bind_structured_output is None:
+        structured = format_model.with_structured_output(
+            schema,
+            method=model_route.structured_output_method,
+            include_raw=True,
         )
-
-        schema = native_openai_structured_output_schema(schema)
-    structured = format_model.with_structured_output(
-        schema,
-        method=model_route.structured_output_method,
-        include_raw=True,
-    )
+    else:
+        structured = model_route.bind_structured_output(format_model, schema)
     shape_messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(
@@ -434,11 +435,24 @@ async def _shape_structured_output(
     finally:
         generation_callback.close_open("generation_interrupted")
         await _close_model_clients(format_model)
-    if isinstance(result, dict) and "parsed" in result:
-        parsed = result["parsed"]
-        in_tok, out_tok = _usage_from_message(result.get("raw"))
-        return parsed, in_tok, out_tok
-    return result, 0, 0
+    if not isinstance(result, dict) or "parsed" not in result:
+        raise ValueError("Structured output response is missing parsed output")
+    if result.get("parsing_error") is not None:
+        raise ValueError("Structured output parsing failed")
+    parsed = result["parsed"]
+    if isinstance(validation_schema, dict):
+        from jsonschema import ValidationError, validate  # type: ignore[import-untyped]
+        from referencing import Registry
+
+        try:
+            # Local definitions/references work; an empty registry never fetches URLs.
+            validate(parsed, validation_schema, registry=Registry())
+        except ValidationError:
+            raise ValueError("Structured output does not match configured schema") from None
+    elif parsed is None:
+        raise ValueError("Structured output response is missing parsed output")
+    in_tok, out_tok = _usage_from_message(result.get("raw"))
+    return parsed, in_tok, out_tok
 
 
 def _tool_call_events(msg: Any) -> list[ProviderEvent]:
@@ -480,7 +494,7 @@ def _process_ai_message(
                 events.append(TextDeltaEvent(text=text))
                 text_delta += text
 
-    if not getattr(msg, "content_blocks", None):
+    if not getattr(msg, "content_blocks", None) and msg.content:
         content = msg.content if isinstance(msg.content, str) else stringify(msg.content)
         if content and not msg.tool_calls:
             events.append(TextDeltaEvent(text=content))
@@ -537,159 +551,170 @@ class DeepAgentsProvider(AgentProvider):
         chat_model = self._model_route.create_model(
             self._model_route.model_parameters, options.reasoning_config
         )
-        local_backend = LocalShellBackend(
-            root_dir=options.cwd,
-            virtual_mode=False,
-            inherit_env=True,
-            max_output_bytes=MAX_TOOL_RETURN_CHARS,
-        )
-        skills_root = str(local_backend.cwd)
-        # SDK-native skills layout: the skills root is a virtual CompositeBackend
-        # route, so file tools advertise /skills/<name>/... while the SDK's
-        # FilesystemMiddleware injects the virtual-to-host path mapping that the
-        # shell needs (deepagents #3050/#3762 pattern). The default backend keeps
-        # physical paths for general work; artifacts stay in the agent home.
-        skills_backend = FilesystemBackend(root_dir=skills_root, virtual_mode=True)
-        backend = CompositeBackend(
-            default=local_backend,
-            routes={"/skills/": skills_backend},
-            artifacts_root=os.path.join(os.environ.get("HOME", "/home/agent"), ".deepagents"),
-        )
+        generation_callback: Any | None = None
+        try:
+            local_backend = LocalShellBackend(
+                root_dir=options.cwd,
+                virtual_mode=False,
+                inherit_env=True,
+                max_output_bytes=MAX_TOOL_RETURN_CHARS,
+            )
+            skills_root = str(local_backend.cwd)
+            # SDK-native skills layout: the skills root is a virtual CompositeBackend
+            # route, so file tools advertise /skills/<name>/... while the SDK's
+            # FilesystemMiddleware injects the virtual-to-host path mapping that the
+            # shell needs (deepagents #3050/#3762 pattern). The default backend keeps
+            # physical paths for general work; artifacts stay in the agent home.
+            skills_backend = FilesystemBackend(root_dir=skills_root, virtual_mode=True)
+            backend = CompositeBackend(
+                default=local_backend,
+                routes={"/skills/": skills_backend},
+                artifacts_root=os.path.join(os.environ.get("HOME", "/home/agent"), ".deepagents"),
+            )
 
-        instruction = TOOL_DATA_TRUST_INSTRUCTION.strip()
-        subagent_spec = {**GENERAL_PURPOSE_SUBAGENT}
-        subagent_system_prompt = subagent_spec.get("system_prompt") or ""
-        subagent_spec["system_prompt"] = (
-            f"{subagent_system_prompt}\n{instruction}" if subagent_system_prompt else instruction
-        )
-        agent_kwargs: dict[str, Any] = {
-            "model": chat_model,
-            "backend": backend,
-            "system_prompt": f"{options.system_prompt}\n{instruction}",
-        }
+            instruction = TOOL_DATA_TRUST_INSTRUCTION.strip()
+            subagent_spec = {**GENERAL_PURPOSE_SUBAGENT}
+            subagent_system_prompt = subagent_spec.get("system_prompt") or ""
+            subagent_spec["system_prompt"] = (
+                f"{subagent_system_prompt}\n{instruction}"
+                if subagent_system_prompt
+                else instruction
+            )
+            agent_kwargs: dict[str, Any] = {
+                "model": chat_model,
+                "backend": backend,
+                "system_prompt": f"{options.system_prompt}\n{instruction}",
+            }
 
-        if options.tool_output_inspection_enabled:
-            try:
-                from lightspeed_agentic.inspection.chunking import Utf8ByteCodec
-                from lightspeed_agentic.inspection.client import LangChainClassifierClient
-                from lightspeed_agentic.inspection.inspector import (
-                    inspect_tool_result as run_inspection,
-                )
-
-                classifier_model = self._model_route.create_model(
-                    self._model_route.model_parameters, None
-                )
-                classifier_client = LangChainClassifierClient(classifier_model)
-                model_profile = getattr(classifier_model, "profile", None) or {}
-                context_window_tokens = (
-                    model_profile.get("max_input_tokens")
-                    or model_profile.get("max_context_size")
-                    or 100_000
-                )
-
-                async def inspect_tool_result_callback(
-                    tool_name: str,
-                    result_type: str,
-                    value: Any,
-                    tool_call_id: str,
-                ) -> Any:
-                    return await run_inspection(
-                        classifier_client,
-                        tool_name=tool_name,
-                        result_type=result_type,
-                        value=value,
-                        codec=Utf8ByteCodec(),
-                        tool_call_id=tool_call_id or None,
-                        context_window_tokens=context_window_tokens,
-                        instruction_tokens=512,
-                        output_tokens=128,
-                        deadline=options.deadline,
-                        provider=self._model_route.telemetry_provider,
-                        model=self._model_route.model,
+            if options.tool_output_inspection_enabled:
+                try:
+                    from lightspeed_agentic.inspection.chunking import Utf8ByteCodec
+                    from lightspeed_agentic.inspection.client import (
+                        CLASSIFIER_OUTPUT_TOKENS,
+                        LangChainClassifierClient,
+                    )
+                    from lightspeed_agentic.inspection.inspector import (
+                        inspect_tool_result as run_inspection,
                     )
 
-                inspector_callback = inspect_tool_result_callback
-            except Exception as exc:
-                if classifier_model is not None:
-                    await _close_model_clients(classifier_model)
-                await _close_model_clients(chat_model)
-                raise ToolResultSafetyInspectionFailed() from exc
+                    classifier_model = self._model_route.create_model(
+                        replace(
+                            self._model_route.model_parameters,
+                            max_output_tokens=CLASSIFIER_OUTPUT_TOKENS,
+                        ),
+                        None,
+                    )
+                    classifier_client = LangChainClassifierClient(classifier_model)
+                    model_profile = getattr(classifier_model, "profile", None) or {}
+                    context_window_tokens = (
+                        model_profile.get("max_input_tokens")
+                        or model_profile.get("max_context_size")
+                        or 100_000
+                    )
 
-        inspection_middleware = ToolResultInspectionMiddleware(inspector_callback)
-        summarization_middleware = create_tool_data_summarization_middleware(chat_model, backend)
-        agent_kwargs["middleware"] = [inspection_middleware, summarization_middleware]
-        subagent_spec["middleware"] = [inspection_middleware, summarization_middleware]
-        agent_kwargs["subagents"] = [subagent_spec]
-        generation_callback = _create_generation_callback(
-            self._model_route,
-            parent_context,
-            main_name=agent_kwargs.get("name"),
-        )
+                    async def inspect_tool_result_callback(
+                        tool_name: str,
+                        result_type: str,
+                        value: Any,
+                        tool_call_id: str,
+                    ) -> Any:
+                        return await run_inspection(
+                            classifier_client,
+                            tool_name=tool_name,
+                            result_type=result_type,
+                            value=value,
+                            codec=Utf8ByteCodec(),
+                            tool_call_id=tool_call_id or None,
+                            context_window_tokens=context_window_tokens,
+                            instruction_tokens=512,
+                            output_tokens=CLASSIFIER_OUTPUT_TOKENS,
+                            deadline=options.deadline,
+                            provider=self._model_route.telemetry_provider,
+                            model=self._model_route.model,
+                        )
 
-        if has_skills(skills_root):
-            agent_kwargs["skills"] = ["/skills/"]
+                    inspector_callback = inspect_tool_result_callback
+                except Exception as exc:
+                    raise ToolResultSafetyInspectionFailed() from exc
 
-        schema_model: Any | None = None
-        if options.output_schema:
-            schema_model = (
-                _json_schema_to_pydantic(options.output_schema)
-                if isinstance(options.output_schema, dict)
-                and self._model_route.structured_output_schema_mode == "pydantic"
-                else options.output_schema
+            inspection_middleware = ToolResultInspectionMiddleware(inspector_callback)
+            summarization_middleware = create_tool_data_summarization_middleware(
+                chat_model, backend
+            )
+            agent_kwargs["middleware"] = [inspection_middleware, summarization_middleware]
+            subagent_spec["middleware"] = [inspection_middleware, summarization_middleware]
+            agent_kwargs["subagents"] = [subagent_spec]
+            generation_callback = _create_generation_callback(
+                self._model_route,
+                parent_context,
+                main_name=agent_kwargs.get("name"),
             )
 
-        mcp_tools: list[Any] = []
-        if options.mcp_servers:
-            from langchain_mcp_adapters.client import MultiServerMCPClient
+            if has_skills(skills_root):
+                agent_kwargs["skills"] = ["/skills/"]
 
-            from lightspeed_agentic.tls import create_async_http_client
+            schema_model: Any | None = None
+            if options.output_schema:
+                schema_model = (
+                    _json_schema_to_pydantic(options.output_schema)
+                    if isinstance(options.output_schema, dict)
+                    and self._model_route.structured_output_schema_mode == "pydantic"
+                    else options.output_schema
+                )
 
-            client = MultiServerMCPClient(
-                {
-                    server.name: {  # type: ignore[misc]
-                        "transport": "http",
-                        "url": server.url,
-                        "headers": {h.name: h.value for h in server.headers},
-                        "timeout": server.timeout,
-                        "httpx_client_factory": create_async_http_client,
+            mcp_tools: list[Any] = []
+            if options.mcp_servers:
+                from langchain_mcp_adapters.client import MultiServerMCPClient
+
+                from lightspeed_agentic.tls import create_async_http_client
+
+                client = MultiServerMCPClient(
+                    {
+                        server.name: {  # type: ignore[misc]
+                            "transport": "http",
+                            "url": server.url,
+                            "headers": {h.name: h.value for h in server.headers},
+                            "timeout": server.timeout,
+                            "httpx_client_factory": create_async_http_client,
+                        }
+                        for server in options.mcp_servers
                     }
-                    for server in options.mcp_servers
-                }
-            )
-            for server in options.mcp_servers:
-                allowed_tool_names = set(server.allowed_tool_names)
-                server_tools = await client.get_tools(server_name=server.name)
-                mcp_tools.extend(tool for tool in server_tools if tool.name in allowed_tool_names)
+                )
+                for server in options.mcp_servers:
+                    allowed_tool_names = set(server.allowed_tool_names)
+                    server_tools = await client.get_tools(server_name=server.name)
+                    mcp_tools.extend(
+                        tool for tool in server_tools if tool.name in allowed_tool_names
+                    )
 
-        if mcp_tools:
-            agent_kwargs["tools"] = mcp_tools
+            if mcp_tools:
+                agent_kwargs["tools"] = mcp_tools
 
-        # allowed_tools is not forwarded: deepagents' LocalShellBackend exposes a broader
-        # built-in tool set than DEFAULT_ALLOWED_TOOLS. Filtering is a follow-up.
-        agent = create_deep_agent(**agent_kwargs)
+            # allowed_tools is not forwarded: deepagents' LocalShellBackend exposes a broader
+            # built-in tool set than DEFAULT_ALLOWED_TOOLS. Filtering is a follow-up.
+            agent = create_deep_agent(**agent_kwargs)
 
-        thread_id = f"ls-{uuid.uuid4().hex[:12]}"
-        stream_config: dict[str, Any] = {
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": options.max_turns,
-        }
-        stream_config["callbacks"] = [generation_callback]
-        result_text = ""
-        pending_tool_results: list[tuple[str, str, str, Any, ToolResultEvent]] = []
-        total_input_tokens = 0
-        total_output_tokens = 0
-        pending_tool_call_chunk: Any | None = None
-        input_state = {"messages": [{"role": "user", "content": options.prompt}]}
+            thread_id = f"ls-{uuid.uuid4().hex[:12]}"
+            stream_config: dict[str, Any] = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": options.max_turns,
+            }
+            stream_config["callbacks"] = [generation_callback]
+            result_text = ""
+            pending_tool_results: list[tuple[str, str, str, Any, ToolResultEvent]] = []
+            total_input_tokens = 0
+            total_output_tokens = 0
+            pending_tool_call_chunk: Any | None = None
+            input_state = {"messages": [{"role": "user", "content": options.prompt}]}
 
-        def flush_pending_tool_calls() -> list[ProviderEvent]:
-            nonlocal pending_tool_call_chunk
-            if pending_tool_call_chunk is None:
-                return []
-            events = _tool_call_events(pending_tool_call_chunk)
-            pending_tool_call_chunk = None
-            return events
+            def flush_pending_tool_calls() -> list[ProviderEvent]:
+                nonlocal pending_tool_call_chunk
+                if pending_tool_call_chunk is None:
+                    return []
+                events = _tool_call_events(pending_tool_call_chunk)
+                pending_tool_call_chunk = None
+                return events
 
-        try:
             async for msg, _stream_metadata in cast(Any, agent).astream(
                 input_state,
                 config=stream_config,
@@ -780,11 +805,12 @@ class DeepAgentsProvider(AgentProvider):
             for event in flush_pending_tool_calls():
                 yield event
         except BaseException as exc:
-            if not isinstance(exc, GeneratorExit):
+            if generation_callback is not None and not isinstance(exc, GeneratorExit):
                 generation_callback.close_open(type(exc).__name__)
             raise
         finally:
-            generation_callback.close_open("generation_interrupted")
+            if generation_callback is not None:
+                generation_callback.close_open("generation_interrupted")
             await _close_model_clients(chat_model)
             if classifier_model is not None:
                 await _close_model_clients(classifier_model)

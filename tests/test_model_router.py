@@ -215,11 +215,10 @@ def test_model_routes_require_a_configured_model(provider: str, family: str | No
     ("provider", "family", "base_url"),
     [
         ("vertex", "openai", "https://vertex-openai.example.test/v1"),
-        ("openai", None, "https://vllm.example.test/v1"),
         ("azure", None, "https://azure.example.test"),
     ],
 )
-def test_non_native_openai_routes_return_sdk_with_configured_model(
+def test_azure_and_vertex_openai_routes_return_legacy_sdk(
     provider: str, family: str | None, base_url: str
 ) -> None:
     from lightspeed_agentic.providers.model_router import resolve_model_route
@@ -255,6 +254,90 @@ def test_non_native_openai_routes_return_sdk_with_configured_model(
 
 
 @pytest.mark.parametrize(
+    ("provider_url", "legacy_url", "canonical_model", "override", "expected_url", "expected_model"),
+    [
+        (
+            "https://vllm.example.test/serving/v1",
+            "https://api.openai.com/v1",
+            "org/Gemma-4-served:stable",
+            None,
+            "https://vllm.example.test/serving/v1",
+            "org/Gemma-4-served:stable",
+        ),
+        (None, "http://localhost:8000/v1", None, None, "http://localhost:8000/v1", "legacy-model"),
+        (
+            "https://vllm.example.test/v1",
+            "https://ignored.example.test/v1",
+            "configured-model",
+            "explicit/Model:tag",
+            "https://vllm.example.test/v1",
+            "explicit/Model:tag",
+        ),
+    ],
+)
+def test_compatible_openai_route_preserves_resolved_settings_without_env_mutation(
+    provider_url: str | None,
+    legacy_url: str,
+    canonical_model: str | None,
+    override: str | None,
+    expected_url: str,
+    expected_model: str,
+) -> None:
+    from lightspeed_agentic.config import resolve_model_family
+    from lightspeed_agentic.providers.model_router import ModelParameters, resolve_model_route
+    from lightspeed_agentic.providers.models.openai import (
+        create_openai_compatible_model,
+        openai_compatible_structured_output_schema,
+    )
+
+    os.environ.update(
+        {
+            "LIGHTSPEED_PROVIDER": "openai",
+            "OPENAI_MODEL": "legacy-model",
+            "OPENAI_BASE_URL": legacy_url,
+            "OPENAI_API_KEY": "EMPTY",
+        }
+    )
+    if provider_url is not None:
+        os.environ["LIGHTSPEED_PROVIDER_URL"] = provider_url
+    if canonical_model is not None:
+        os.environ["LIGHTSPEED_MODEL"] = canonical_model
+    family = resolve_model_family()
+    os.environ.update(
+        {
+            "LIGHTSPEED_PROVIDER": "azure",
+            "LIGHTSPEED_MODEL": "changed-model",
+            "LIGHTSPEED_PROVIDER_URL": "https://api.openai.com/v1",
+            "OPENAI_BASE_URL": "https://changed.example.test/v1",
+            "OPENAI_MODEL": "changed-legacy-model",
+            "OPENAI_API_KEY": "ambient-key-must-not-win",
+        }
+    )
+    before = dict(os.environ)
+
+    sdk, route = resolve_model_route(override, model_family=family)
+
+    assert sdk is None
+    assert route is not None
+    assert route.route == "openai-compatible"
+    assert route.model == expected_model
+    assert route.create_model is create_openai_compatible_model
+    assert route.model_parameters == ModelParameters(
+        model=expected_model, base_url=expected_url, api_key="EMPTY"
+    )
+    assert route.telemetry_provider == "openai"
+    assert route.structured_output_method == "json_schema"
+    assert route.structured_output_schema_mode == "raw_json_schema"
+    assert route.translate_output_schema is openai_compatible_structured_output_schema
+    assert "EMPTY" not in repr(route)
+    assert run_readiness_checks(family, route) == (
+        True,
+        {"provider_env": "ok", "model_route": "ok"},
+    )
+    assert dict(os.environ) == before
+
+
+@pytest.mark.parametrize(
     "base_url",
     [None, "https://api.openai.com/v1", "https://API.OPENAI.COM/v1/"],
 )
@@ -264,7 +347,10 @@ def test_native_openai_routes_to_deepagents(base_url: str | None) -> None:
         ResolvedModelRoute,
         resolve_model_route,
     )
-    from lightspeed_agentic.providers.models.openai import create_native_openai_model
+    from lightspeed_agentic.providers.models.openai import (
+        create_native_openai_model,
+        native_openai_structured_output_schema,
+    )
 
     os.environ.update(
         {
@@ -288,7 +374,8 @@ def test_native_openai_routes_to_deepagents(base_url: str | None) -> None:
         base_url=base_url,
         api_key="resolved-openai-key",
     )
-    assert route.structured_output_schema_mode == "openai_strict_json_schema"
+    assert route.structured_output_schema_mode == "raw_json_schema"
+    assert route.translate_output_schema is native_openai_structured_output_schema
     assert "OPENAI_MODEL" not in os.environ
     assert "OPENAI_BASE_URL" not in os.environ
 
@@ -781,6 +868,10 @@ def test_router_does_not_import_optional_sdks_or_construct_models() -> None:
             "    os.environ['LIGHTSPEED_PROVIDER'] = provider\n"
             "    os.environ['LIGHTSPEED_MODEL_PROVIDER'] = 'anthropic'\n"
             "    resolve_model_route()\n"
+            "os.environ['LIGHTSPEED_PROVIDER'] = 'openai'\n"
+            "os.environ['LIGHTSPEED_PROVIDER_URL'] = 'https://vllm.example.test/v1'\n"
+            "sdk, route = resolve_model_route()\n"
+            "assert sdk is None and route.route == 'openai-compatible'\n"
             "assert not any(name.split('.')[0] in "
             "{'anthropic', 'langchain_anthropic', 'langchain_core', 'langchain_aws', "
             "'langchain_google_vertexai', 'langchain_openai', 'google', 'agents'} "

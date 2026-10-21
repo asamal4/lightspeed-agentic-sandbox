@@ -110,19 +110,20 @@ class TestProviderLifecycle:
 
 class TestBatchMain:
     @pytest.mark.parametrize(
-        ("hosting", "family", "adapter"),
+        ("hosting", "family", "adapter", "base_url"),
         [
-            ("anthropic", "anthropic", "deepagents"),
-            ("vertex", "anthropic", "deepagents"),
-            ("bedrock", "anthropic", "deepagents"),
-            ("vertex", "google", "deepagents"),
-            ("vertex", "openai", "openai"),
-            ("openai", "openai", "deepagents"),
-            ("azure", "openai", "openai"),
+            ("anthropic", "anthropic", "deepagents", None),
+            ("vertex", "anthropic", "deepagents", None),
+            ("bedrock", "anthropic", "deepagents", None),
+            ("vertex", "google", "deepagents", None),
+            ("vertex", "openai", "openai", None),
+            ("openai", "openai", "deepagents", None),
+            ("openai", "openai", "deepagents", "https://vllm.example.test/v1"),
+            ("azure", "openai", "openai", None),
         ],
     )
     def test_resolved_route_controls_provider_and_query_model(
-        self, hosting: str, family: str, adapter: str
+        self, hosting: str, family: str, adapter: str, base_url: str | None
     ) -> None:
         from lightspeed_agentic.batch import main
 
@@ -135,6 +136,7 @@ class TestBatchMain:
                     "LIGHTSPEED_PROVIDER": hosting,
                     "LIGHTSPEED_MODEL_PROVIDER": family,
                     "LIGHTSPEED_MODEL": "exact-configured-model",
+                    "LIGHTSPEED_PROVIDER_URL": base_url or "",
                     "LIGHTSPEED_AGENT_TIMEOUT_SECONDS": "300",
                     "LIGHTSPEED_AGENT_MAX_TURNS": "200",
                     "AZURE_OPENAI_API_KEY": "test-key",
@@ -180,7 +182,7 @@ class TestBatchMain:
             expected_route = (
                 "anthropic"
                 if hosting == "anthropic"
-                else "openai"
+                else ("openai-compatible" if base_url else "openai")
                 if hosting == "openai"
                 else f"{hosting}/{family if hosting == 'vertex' else 'anthropic'}"
             )

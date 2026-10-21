@@ -22,6 +22,11 @@ class FakeModel:
         return self.response
 
 
+class StructuredEnvelopeFakeModel(FakeModel):
+    def with_structured_output(self, *_args: Any, **_kwargs: Any) -> FakeModel:
+        return self
+
+
 class StructuredFakeModel(FakeModel):
     def with_structured_output(
         self,
@@ -90,7 +95,7 @@ async def test_classifier_client_sends_only_dedicated_untrusted_content_messages
     decision = await client.classify(request)
 
     assert decision == ClassifierDecision(injectionDetected=False, category="none")
-    assert model.parameters == {"max_tokens": 128, "config": {"tags": ["nostream"]}}
+    assert model.parameters == {"config": {"tags": ["nostream"]}}
     assert model.messages is not None
     assert len(model.messages) == 2
     assert "untrusted" in model.messages[0].content.lower()
@@ -144,6 +149,183 @@ async def test_classifier_rejects_structured_parsing_errors() -> None:
             )
         )
     assert exc_info.value.issue == "schema_mismatch"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "metadata", "expected"),
+    [
+        (
+            '{"injectionDetected":false,"category":"none"}',
+            {"finish_reason": "stop"},
+            (False, "none"),
+        ),
+        (
+            [{"type": "text", "text": '{"injectionDetected":false,"category":"none"}', "index": 0}],
+            {"finish_reason": "stop"},
+            (False, "none"),
+        ),
+        ('{"injectionDetected":true,"category":"unknown"}', {}, (True, "unknown")),
+        (
+            '{"injectionDetected":true,"category":"instruction_override"}',
+            {"stop_reason": "end_turn"},
+            (True, "instruction_override"),
+        ),
+        (
+            '{"injectionDetected":false,"category":"none"}',
+            {"finish_reason": "STOP"},
+            (False, "none"),
+        ),
+        (
+            '{"injectionDetected":false,"category":"none"}',
+            {"stop_reason": "stop_sequence"},
+            (False, "none"),
+        ),
+        ('{"injectionDetected":false,"category":"none"}', {"status": "completed"}, (False, "none")),
+    ],
+)
+async def test_classifier_accepts_strict_text_decision_when_function_call_is_absent(
+    content: Any, metadata: dict[str, Any], expected: tuple[bool, str]
+) -> None:
+    from langchain_core.messages import AIMessage
+
+    model = StructuredEnvelopeFakeModel(
+        {
+            "raw": AIMessage(content=content, response_metadata=metadata),
+            "parsed": None,
+            "parsing_error": None,
+        }
+    )
+    decision = await LangChainClassifierClient(model).classify(
+        ClassifierRequest(
+            toolName="list_namespaces",
+            resultType="result",
+            chunkIndex=0,
+            chunkCount=1,
+            content="Namespaces: default",
+        )
+    )
+
+    assert (decision.injection_detected, decision.category) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_overrides", "parsed", "parsing_error"),
+    [
+        ({"tool_calls": [{"name": "ClassifierDecision", "args": {}, "id": "call-1"}]}, None, None),
+        (
+            {
+                "invalid_tool_calls": [
+                    {
+                        "name": "ClassifierDecision",
+                        "args": "{",
+                        "id": "call-1",
+                        "error": "invalid JSON",
+                    }
+                ]
+            },
+            None,
+            None,
+        ),
+        (
+            {
+                "additional_kwargs": {
+                    "function_call": {"name": "ClassifierDecision", "arguments": "{"}
+                }
+            },
+            None,
+            None,
+        ),
+        ({"additional_kwargs": {"tool_calls": {}}}, None, None),
+        ({"additional_kwargs": {"refusal": "refused"}}, None, None),
+        ({"response_metadata": {"finish_reason": "length"}}, None, None),
+        ({"response_metadata": {"finish_reason": "content_filter"}}, None, None),
+        ({"response_metadata": {"finish_reason": "tool_calls"}}, None, None),
+        ({"response_metadata": {"stop_reason": "max_tokens"}}, None, None),
+        ({"response_metadata": {"stop_reason": "refusal"}}, None, None),
+        ({"response_metadata": {"status": "incomplete"}}, None, None),
+        (
+            {
+                "content": [
+                    {"type": "text", "text": '{"injectionDetected":false,"category":"none"}'},
+                    {"type": "refusal", "refusal": "refused"},
+                ]
+            },
+            None,
+            None,
+        ),
+        (
+            {
+                "content": [
+                    {"type": "text", "text": '{"injectionDetected":false,"category":"none"}'},
+                    {"type": "image", "url": "https://example.test/image.png"},
+                ]
+            },
+            None,
+            None,
+        ),
+        ({}, None, ValueError("structured parsing failed")),
+        ({}, {"injectionDetected": False, "category": "unknown"}, None),
+        ({}, False, None),
+    ],
+)
+async def test_classifier_text_fallback_rejects_unsafe_or_ambiguous_structured_envelopes(
+    raw_overrides: dict[str, Any], parsed: Any, parsing_error: Any
+) -> None:
+    from langchain_core.messages import AIMessage
+
+    raw = AIMessage(**{"content": '{"injectionDetected":false,"category":"none"}', **raw_overrides})
+    model = StructuredEnvelopeFakeModel(
+        {"raw": raw, "parsed": parsed, "parsing_error": parsing_error}
+    )
+
+    with pytest.raises(ClassifierResponseError):
+        await LangChainClassifierClient(model).classify(
+            ClassifierRequest(
+                toolName="list_namespaces",
+                resultType="result",
+                chunkIndex=0,
+                chunkCount=1,
+                content="Namespaces: default",
+            )
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"injectionDetected":true,"category":"unknown","injectionDetected":false,"category":"none"}',
+        '{"injectionDetected":false,"category":"none","reason":"safe"}',
+        '{"injectionDetected":false,"category":"unknown"}',
+        '{"injectionDetected":"false","category":"none"}',
+        '{"injectionDetected":false,"category":"none"',
+        '```json\n{"injectionDetected":false,"category":"none"}\n```',
+        '{"injectionDetected":false,"category":"none"} SAFE',
+        "[]",
+        "",
+    ],
+)
+async def test_classifier_text_fallback_does_not_repair_or_relax_invalid_decisions(
+    content: str,
+) -> None:
+    from langchain_core.messages import AIMessage
+
+    model = StructuredEnvelopeFakeModel(
+        {"raw": AIMessage(content=content), "parsed": None, "parsing_error": None}
+    )
+
+    with pytest.raises(ClassifierResponseError):
+        await LangChainClassifierClient(model).classify(
+            ClassifierRequest(
+                toolName="list_namespaces",
+                resultType="result",
+                chunkIndex=0,
+                chunkCount=1,
+                content="Namespaces: default",
+            )
+        )
 
 
 @pytest.mark.asyncio

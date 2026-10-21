@@ -78,6 +78,7 @@ class ModelParameters:
     provider: ProviderParameters | None = None
     credentials: CredentialSource | None = dataclasses.field(default=None, repr=False)
     api_key: str | None = dataclasses.field(default=None, repr=False)
+    max_output_tokens: int | None = None
 
 
 def _llm_credentials_path() -> str:

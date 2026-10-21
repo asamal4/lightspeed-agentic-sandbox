@@ -71,7 +71,7 @@ belongs in unit tests.
   It does not invoke the removed ADK provider adapter. `openai-agents` is also a
   retained matrix ID, not a harness selector: native OpenAI uses DeepAgents when
   the effective endpoint is unset or HTTPS `api.openai.com`; custom/vLLM endpoints
-  retain the legacy adapter (configuration rule 3a). Record the effective endpoint
+  also use DeepAgents, but with Chat Completions (configuration rule 3a). Record the effective endpoint
   and selected route with live evidence; the matrix ID alone does not prove which
   implementation ran.
   Bedrock Jobs MUST use a Bedrock model or inference profile ID (e.g.
@@ -157,7 +157,7 @@ make e2e openai-agents -k mcp
 - `e2e-containers.sh` reads model from provider-specific env vars (`OPENAI_MODEL`, `GEMINI_MODEL`, etc.); the Gemini matrix ID maps to `LIGHTSPEED_MODEL_PROVIDER=google`
 - `e2e-install-openai-creds.sh` includes `OPENAI_MODEL` and `OPENAI_BASE_URL` as secret keys
 - Batch pods mount the secret via `envFrom`, exposing all keys as environment variables
-- OpenAI client uses `OPENAI_BASE_URL` if set; defaults to `api.openai.com` otherwise
+- Routing captures the effective URL (`LIGHTSPEED_PROVIDER_URL`, then `OPENAI_BASE_URL`, then native default) and model/key in typed parameters. Native OpenAI selects DeepAgents/Responses; custom/vLLM selects DeepAgents/Chat Completions. Record the selected route; this configuration support alone is not live acceptance evidence.
 
 **Backward compatible:** existing OpenAI tests work unchanged. Custom endpoint
 support is opt-in via env vars. See the environment exports table below for the

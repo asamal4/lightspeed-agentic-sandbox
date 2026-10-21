@@ -2,8 +2,8 @@
 
 Multi-provider agentic sandbox for OpenShift Lightspeed. This repo runs as a
 one-shot batch process with a DeepAgents harness for Anthropic, Vertex Gemini,
-and native OpenAI. Azure, Vertex/OpenAI, and custom OpenAI-compatible endpoints
-retain the legacy OpenAI provider adapter.
+and native or custom OpenAI-compatible endpoints (including vLLM). Azure and
+Vertex/OpenAI retain the legacy OpenAI provider adapter.
 When editing it, optimize for thin provider wrappers, consistent event mapping,
 and tests that stay offline unless you are intentionally running live cluster BDD.
 
@@ -140,15 +140,15 @@ src/lightspeed_agentic/
 │   └── models/
 │       ├── anthropic.py  # Explicit direct, Bedrock, and Vertex model constructors
 │       ├── gemini.py     # Vertex Gemini model constructor
-│       └── openai.py     # Native OpenAI Responses model and strict-schema shaping
+│       └── openai.py     # OpenAI Responses/Chat Completions models and schema shaping
 ```
 
-| Feature | DeepAgents (Anthropic, Vertex Gemini, native OpenAI) | Legacy OpenAI Agents |
+| Feature | DeepAgents (Anthropic, Vertex Gemini, native/custom OpenAI) | Legacy OpenAI Agents |
 | --- | --- | --- |
-| Models | Anthropic direct, Bedrock, and Vertex; Gemini on Vertex; native OpenAI | Azure, Vertex/OpenAI, custom/vLLM endpoints |
+| Models | Anthropic direct, Bedrock, and Vertex; Gemini on Vertex; native OpenAI and custom/vLLM endpoints | Azure, Vertex/OpenAI |
 | Tools | `LocalShellBackend` + `/skills/` `FilesystemBackend` route + MCP tools | Native `SandboxAgent` shell/filesystem/skills |
 | Skills | `/skills/` virtual route passed to `create_deep_agent()` when skills exist | Native `Skills` capability |
-| Structured output | Tool-free second pass without reasoning; native OpenAI uses strict JSON schema | Existing endpoint-specific `output_type` / two-pass behavior |
+| Structured output | Tool-free second pass without reasoning; native OpenAI uses strict JSON schema, compatible endpoints preserve the supplied schema | Existing endpoint-specific `output_type` / two-pass behavior |
 | Streaming | `astream(stream_mode="messages")` | `Runner.run_streamed()` |
 
 Keep provider adapters thin. The SDK should own tool execution and skill
@@ -168,10 +168,11 @@ for the route, artifact storage, and execution limits.
   package import path.
 - Batch resolves the model family once and reuses it for routing and readiness.
   Inject `ResolvedModelRoute` into DeepAgents for Anthropic, Vertex Gemini, and
-  native OpenAI; hosting selection and model construction belong in
+  native/custom OpenAI; hosting selection and model construction belong in
   `model_router.py` and `providers/models/`, not the adapter. Native OpenAI means
   hosting `openai` with no endpoint override or an HTTPS `api.openai.com` hostname.
-  Azure, Vertex/OpenAI, and custom/vLLM endpoints retain the legacy adapter.
+  Custom/vLLM endpoints use Chat Completions; native OpenAI uses Responses.
+  Azure and Vertex/OpenAI retain the legacy adapter.
   See configuration rule 3a for endpoint precedence and HTTPS validation.
 - `types.py` event objects are frozen dataclasses. New event types should follow
   the same pattern and stay simple to serialize/log.

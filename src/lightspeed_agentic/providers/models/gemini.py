@@ -36,6 +36,8 @@ def create_vertex_gemini_model(
     if parameters.base_url is not None:
         kwargs["base_url"] = parameters.base_url
     kwargs["credentials"] = create_vertex_credentials(credential_source)
+    if parameters.max_output_tokens is not None:
+        kwargs["max_output_tokens"] = parameters.max_output_tokens
     if reasoning_config:
         kwargs["thinking_config"] = reasoning_config
     return ChatGoogleGenerativeAI(**kwargs)

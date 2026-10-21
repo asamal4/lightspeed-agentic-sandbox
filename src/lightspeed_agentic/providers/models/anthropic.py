@@ -63,6 +63,8 @@ def create_direct_model(
     }
     if parameters.base_url is not None:
         kwargs["base_url"] = parameters.base_url
+    if parameters.max_output_tokens is not None:
+        kwargs["max_tokens"] = parameters.max_output_tokens
     thinking = reasoning_config.get("thinking") if reasoning_config else None
     if thinking:
         kwargs["thinking"] = thinking
@@ -108,6 +110,8 @@ def create_bedrock_model(
         "region_name": provider.region,
         **credential_kwargs,
     }
+    if parameters.max_output_tokens is not None:
+        kwargs["max_tokens"] = parameters.max_output_tokens
     thinking = reasoning_config.get("thinking") if reasoning_config else None
     if thinking:
         kwargs["thinking"] = thinking
@@ -139,6 +143,8 @@ def create_vertex_model(
         "async_http_client": create_async_http_client(),
     }
     kwargs["credentials"] = credentials
+    if parameters.max_output_tokens is not None:
+        kwargs["max_tokens"] = parameters.max_output_tokens
     if parameters.base_url is not None:
         # Vertex SDK overrides replace its versioned default base URL entirely.
         endpoint = urlsplit(parameters.base_url)

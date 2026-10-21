@@ -181,6 +181,14 @@ _ensure_uv() {
 }
 _ensure_uv
 uv sync --all-extras
+if [[ "${PROVIDER}" == "openai-agents" ]]; then
+    echo "runner: running native OpenAI request-capture and agent integration tests"
+    uv run pytest -q \
+        tests/test_openai_models.py::test_openai_model_sends_responses_request_with_configured_settings \
+        tests/test_openai_models.py::test_openai_model_omits_reasoning_from_request_when_unconfigured \
+        tests/test_openai_models.py::test_native_openai_structured_output_sends_strict_schema_in_responses_request \
+        tests/test_openai_models.py::test_native_openai_deepagent_reads_file_and_shapes_structured_result
+fi
 export E2E_SKIP_INSTALL=1
 
 ARTIFACT_DIR="${ARTIFACT_DIR:-/workspace/artifacts}"

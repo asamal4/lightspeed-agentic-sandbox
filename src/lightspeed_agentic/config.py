@@ -2,8 +2,8 @@
 
 The operator sets LIGHTSPEED_* values on the sandbox pod. Migrated Anthropic,
 Vertex, and Bedrock routes keep these values in typed configuration rather than
-mutating process-global SDK settings. The legacy OpenAI/Azure adapters still
-translate settings to the environment variables their SDKs consume.
+mutating process-global SDK settings. Legacy OpenAI/Azure adapters still depend
+on SDK-specific environment settings.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class ModelParameters:
     base_url: str | None = None
     provider: ProviderParameters | None = None
     credentials: CredentialSource | None = dataclasses.field(default=None, repr=False)
+    api_key: str | None = dataclasses.field(default=None, repr=False)
 
 
 def _llm_credentials_path() -> str:
@@ -93,6 +95,8 @@ class ResolvedModelFamily:
     credential_file_envs: tuple[str, ...] = ()
     azure_auth_mode: str | None = None
     azure_credentials: dict[str, str] | None = None
+    azure_api_version: str | None = dataclasses.field(kw_only=True, default=None)
+    azure_api_key: str | None = dataclasses.field(kw_only=True, default=None, repr=False)
     hosting: Literal["anthropic", "vertex", "bedrock", "openai", "azure"] = dataclasses.field(
         kw_only=True
     )
@@ -100,6 +104,7 @@ class ResolvedModelFamily:
     base_url: str | None = None
     provider: ProviderParameters | None = None
     credentials: CredentialSource | None = dataclasses.field(default=None, repr=False)
+    api_key: str | None = dataclasses.field(default=None, repr=False)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -113,18 +118,25 @@ class ResolvedSDK:
     azure_credentials: dict[str, str] | None = None  # Entra SP values for adapter
 
 
-def _setenv(key: str, value: str) -> None:
-    os.environ[key] = value
-
-
-def _setenv_if_value(key: str, value: str | None) -> None:
-    if value:
-        _setenv(key, value)
-
-
 def _resolved_value(value: str | None, env_name: str) -> str | None:
     """Return the explicit value or the corresponding legacy SDK environment value."""
     return value or os.environ.get(env_name, "").strip() or None
+
+
+def _is_native_openai_endpoint(base_url: str | None) -> bool:
+    """Native OpenAI uses HTTPS to the public API host or the SDK's default endpoint."""
+    if not base_url:
+        return True
+    try:
+        parsed_url = urlparse(base_url)
+        hostname = (parsed_url.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    if hostname != "api.openai.com":
+        return False
+    if parsed_url.scheme.lower() != "https":
+        raise ValueError("Native OpenAI endpoint must use HTTPS")
+    return True
 
 
 def _resolve_vertex_region(region: str | None) -> str:
@@ -186,19 +198,17 @@ def _resolve_vertex(
                 ),
             )
         case "openai":
-            _setenv_if_value("OPENAI_MODEL", model)
-            _setenv_if_value("OPENAI_BASE_URL", url)
-            _setenv(
-                "GOOGLE_APPLICATION_CREDENTIALS",
-                f"{_llm_credentials_path()}/GOOGLE_APPLICATION_CREDENTIALS",
-            )
             return ResolvedModelFamily(
                 "openai",
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
                 ("GOOGLE_APPLICATION_CREDENTIALS",),
                 hosting="vertex",
                 model=_resolved_value(model, "OPENAI_MODEL"),
-                base_url=os.environ.get("OPENAI_BASE_URL", "").strip() or None,
+                base_url=url or os.environ.get("OPENAI_BASE_URL", "").strip() or None,
+                credentials=VertexCredentialSource(
+                    credentials_file=Path(_llm_credentials_path())
+                    / "GOOGLE_APPLICATION_CREDENTIALS"
+                ),
             )
         case _:
             raise ValueError(
@@ -208,14 +218,25 @@ def _resolve_vertex(
 
 
 def _resolve_openai(model: str | None, url: str | None) -> ResolvedModelFamily:
-    _setenv_if_value("OPENAI_MODEL", model)
-    _setenv_if_value("OPENAI_BASE_URL", url)
+    base_url = url or os.environ.get("OPENAI_BASE_URL", "").strip() or None
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip() or None
+    if _is_native_openai_endpoint(base_url):
+        return ResolvedModelFamily(
+            "openai",
+            ("OPENAI_API_KEY",),
+            hosting="openai",
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+        )
+
     return ResolvedModelFamily(
         "openai",
         ("OPENAI_API_KEY",),
         hosting="openai",
         model=_resolved_value(model, "OPENAI_MODEL"),
-        base_url=os.environ.get("OPENAI_BASE_URL", "").strip() or None,
+        base_url=base_url,
+        api_key=api_key,
     )
 
 
@@ -259,9 +280,9 @@ def _resolve_azure(
     url: str | None,
     api_version: str | None,
 ) -> ResolvedModelFamily:
-    _setenv_if_value("OPENAI_MODEL", model)
-    _setenv_if_value("AZURE_OPENAI_ENDPOINT", url)
-    _setenv("AZURE_OPENAI_API_VERSION", api_version or DEFAULT_AZURE_API_VERSION)
+    resolved_model = _resolved_value(model, "OPENAI_MODEL")
+    resolved_base_url = url or os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip() or None
+    resolved_api_version = api_version or DEFAULT_AZURE_API_VERSION
 
     creds_path = _llm_credentials_path()
     client_id = _read_credential_file(f"{creds_path}/client_id")
@@ -275,9 +296,10 @@ def _resolve_azure(
             "openai",
             (),  # no env-based credentials needed
             azure_auth_mode="entra_id",
+            azure_api_version=resolved_api_version,
             hosting="azure",
-            model=_resolved_value(model, "OPENAI_MODEL"),
-            base_url=os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip() or None,
+            model=resolved_model,
+            base_url=resolved_base_url,
             azure_credentials={
                 "client_id": client_id,
                 "tenant_id": tenant_id,
@@ -288,15 +310,16 @@ def _resolve_azure(
     # API-key mode — check file first, then env
     api_key_file = _read_credential_file(f"{creds_path}/apitoken")
     if api_key_file:
-        _setenv("AZURE_OPENAI_API_KEY", api_key_file)
         logger.info("Azure credential resolution: API key (from file)")
         return ResolvedModelFamily(
             "openai",
             ("AZURE_OPENAI_API_KEY",),
             azure_auth_mode="api_key",
+            azure_api_version=resolved_api_version,
+            azure_api_key=api_key_file,
             hosting="azure",
-            model=_resolved_value(model, "OPENAI_MODEL"),
-            base_url=os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip() or None,
+            model=resolved_model,
+            base_url=resolved_base_url,
         )
 
     api_key_env = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
@@ -306,9 +329,11 @@ def _resolve_azure(
             "openai",
             ("AZURE_OPENAI_API_KEY",),
             azure_auth_mode="api_key",
+            azure_api_version=resolved_api_version,
+            azure_api_key=api_key_env,
             hosting="azure",
-            model=_resolved_value(model, "OPENAI_MODEL"),
-            base_url=os.environ.get("AZURE_OPENAI_ENDPOINT", "").strip() or None,
+            model=resolved_model,
+            base_url=resolved_base_url,
         )
 
     raise ValueError(

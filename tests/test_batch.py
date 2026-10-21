@@ -117,7 +117,7 @@ class TestBatchMain:
             ("bedrock", "anthropic", "deepagents"),
             ("vertex", "google", "deepagents"),
             ("vertex", "openai", "openai"),
-            ("openai", "openai", "openai"),
+            ("openai", "openai", "deepagents"),
             ("azure", "openai", "openai"),
         ],
     )
@@ -178,8 +178,10 @@ class TestBatchMain:
             route = create.call_args.args[1]
             assert route.model == "exact-configured-model"
             expected_route = (
-                hosting
+                "anthropic"
                 if hosting == "anthropic"
+                else "openai"
+                if hosting == "openai"
                 else f"{hosting}/{family if hosting == 'vertex' else 'anthropic'}"
             )
             assert route.route == expected_route

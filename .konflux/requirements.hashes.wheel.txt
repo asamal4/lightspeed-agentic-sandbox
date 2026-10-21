@@ -191,6 +191,9 @@ pyyaml==6.0.3 \
     --hash=sha256:d76fd28238122285a5a5790b3fba7ccfce6006e19eb2c8fbd6700d723c3f674b
 referencing==0.37.0 \
     --hash=sha256:b290b587a835bb688b817f9b73927f6fc273bbad723690754c815912da2bc845
+regex==2026.9.29 \
+    --hash=sha256:3ce9e446c0d2824c4eebe81ee1e351ae096a4387d2ea6271f4e1043a7def5b93 \
+    --hash=sha256:9e8547621c3c60ff7beaad2f422191b7b30c6d14eac55a39ed9ea01d48609c7f
 requests==2.34.2 \
     --hash=sha256:ea6708de2da329a533299949db29fca0e3f7e3135068ad5171a28d07a9687631
 requests-oauthlib==2.0.0 \
@@ -212,6 +215,9 @@ starlette==1.3.1 \
     --hash=sha256:19acd5bfb037734bb027cb753f36379bca5f72da9b79fa7fb3ef4639b1999f6b
 tenacity==9.1.4 \
     --hash=sha256:eb86e53b6b467dfbbedc4b64399eb73def7f0ca9b7feaf28bb1785169c644971
+tiktoken==0.14.0 \
+    --hash=sha256:0832baab0f5074a3f03c9aed0677bcd6352e06667dfe78e38271bbd7c068a839 \
+    --hash=sha256:0a332ccb241eb60061beb3d3a5cf89485e620de582557f2b2e1673089ef98191
 truststore==0.10.4 \
     --hash=sha256:873c111fcf91e02855554f33a85495fd731951d9ee2a19ed3869082d389b2c81
 typing-extensions==4.16.0 \

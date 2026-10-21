@@ -1,10 +1,10 @@
 # System Overview
 
-The lightspeed-agentic-sandbox is a multi-provider agent runtime that runs inside ephemeral Kubernetes pods as a **one-shot batch process**. The OpenShift Lightspeed operator mounts input files, starts the container, and reads the Result CR and exit status. Anthropic and Vertex Gemini use the shared DeepAgents harness; OpenAI retains its legacy provider adapter.
+The lightspeed-agentic-sandbox is a multi-provider agent runtime that runs inside ephemeral Kubernetes pods as a **one-shot batch process**. The OpenShift Lightspeed operator mounts input files, starts the container, and reads the Result CR and exit status. Anthropic, Vertex Gemini, and native OpenAI use the shared DeepAgents harness; Azure, Vertex/OpenAI, and custom/vLLM endpoints retain the legacy provider adapter.
 
 ## Single-Harness Migration [PARTIALLY IMPLEMENTED: OLS-4434]
 
-Anthropic and Vertex/Google routes use the shared DeepAgents adapter. Vertex Gemini is provided through the `ChatGoogleGenerativeAI` model integration; DeepAgents owns tools/skills, admitted MCP integration, safety, and the common event path. OpenAI remains on its legacy OpenAI Agents adapter pending its migration. Operator inputs, credential contracts, batch lifecycle, and Result publishing remain unchanged. The Google ADK provider adapter is removed; cleanup of its declared dependency is deferred. The broader target and remaining migration gates are described in [provider-contract.md](provider-contract.md#deepagents-consolidation-partially-implemented-ols-4434) and [decision 0003](../decisions/0003-single-deepagents-harness.md).
+Anthropic and Vertex/Google routes use the shared DeepAgents adapter. Vertex Gemini is provided through the `ChatGoogleGenerativeAI` model integration; DeepAgents owns tools/skills, admitted MCP integration, safety, and the common event path. Native OpenAI also uses DeepAgents with `ChatOpenAI` on the Responses API; its endpoint boundary is defined in [configuration rule 3a](configuration.md). Azure, Vertex/OpenAI, and custom/vLLM endpoints retain the legacy OpenAI Agents adapter. This split is implementation status, not a claim of completed live parity or telemetry compatibility review. Operator inputs, credential contracts, batch lifecycle, and Result publishing remain unchanged. The Google ADK provider adapter is removed; cleanup of its declared dependency is deferred. The broader target and remaining migration gates are described in [provider-contract.md](provider-contract.md#deepagents-consolidation-partially-implemented-ols-4434) and [decision 0003](../decisions/0003-single-deepagents-harness.md).
 
 ## Behavioral Rules
 
@@ -18,15 +18,15 @@ Anthropic and Vertex/Google routes use the shared DeepAgents adapter. Vertex Gem
 
 ### Component Inventory
 
-4. Major components: batch entrypoint (`batch.py`), agent execution (`run_agent.py`), provider abstraction (factory, events, options), provider adapters (DeepAgents and legacy OpenAI), model routing and construction (`providers/model_router.py`, `providers/models/anthropic.py`, `providers/models/gemini.py`), configuration (`config.py`), MCP (`mcp.py`), Result CR publishing (`publish_results/`), readiness checks (`readiness.py`), and observability (`audit.py`, `metrics.py`, `tracing.py`).
+4. Major components: batch entrypoint (`batch.py`), agent execution (`run_agent.py`), provider abstraction (factory, events, options), provider adapters (DeepAgents and legacy OpenAI), model routing and construction (`providers/model_router.py`, `providers/models/anthropic.py`, `providers/models/gemini.py`, `providers/models/openai.py`), configuration (`config.py`), MCP (`mcp.py`), Result CR publishing (`publish_results/`), readiness checks (`readiness.py`), and observability (`audit.py`, `metrics.py`, `tracing.py`).
 
 5. Component behavioral rules: `run-api.md`, `provider-contract.md`, `configuration.md`, `health-probes.md`, `audit-logging.md`, `e2e-testing.md`.
 
 ### Lifecycle
 
-6. `batch.main()` lifecycle: read `/input/` and resolve step from `result-template.kind`; resolve the model family once and pass it to `resolve_model_route(model_family=...)`; parse reasoning config, MCP servers, and execution limits; `run_readiness_checks(model_family, model_route)` (fail-fast before the LLM); `init_tracer()` when OTEL is configured; discover/admit MCP tools; construct DeepAgents with the resolved route for Anthropic or Vertex/Google, or the legacy adapter for OpenAI; `run_agent_query()`; publish the Result CR via the Kubernetes API; `shutdown_tracer()`; exit.
+6. `batch.main()` lifecycle: read `/input/` and resolve step from `result-template.kind`; resolve the model family once and pass it to `resolve_model_route(model_family=...)`; parse reasoning config, MCP servers, and execution limits; `run_readiness_checks(model_family, model_route)` (fail-fast before the LLM); `init_tracer()` when OTEL is configured; discover/admit MCP tools; construct DeepAgents with the resolved route for Anthropic, Vertex/Google, or native OpenAI, or the legacy adapter for Azure/Vertex/OpenAI-compatible routes; `run_agent_query()`; publish the Result CR via the Kubernetes API; `shutdown_tracer()`; exit.
 
-7. Provider is selected once per run through `resolve_model_family()` and `resolve_model_route()`. Anthropic and Vertex/Google return typed model routes for DeepAgents; OpenAI retains legacy adapter configuration. The same family object supplies credential readiness requirements.
+7. Provider is selected once per run through `resolve_model_family()` and `resolve_model_route()`. Anthropic, Vertex/Google, and native OpenAI return typed model routes for DeepAgents; the remaining OpenAI routes retain legacy adapter configuration. The same family object supplies credential readiness requirements.
 
 8. Every provider route requires a resolved model: explicit override, canonical `LIGHTSPEED_MODEL`, or route-specific legacy model input. No route silently selects a package default when model configuration is missing. The injected route's model is authoritative in DeepAgents; the legacy OpenAI adapter uses the same resolved-model requirement.
 
@@ -60,6 +60,6 @@ See `configuration.md` for the full environment variable reference.
 
 | Ticket | Summary |
 |---|---|
-| OLS-4434 | Consolidate the remaining OpenAI route on DeepAgents; preserve external contracts and shared tools/safety |
+| OLS-4434 | Consolidate the remaining Azure, Vertex/OpenAI, and custom/vLLM routes on DeepAgents; preserve external contracts and shared tools/safety |
 | OLS-3033 | Align operator-passed `allowedTools` and `llm` with provider options |
 | OLS-3491 | System instructions via `/input/system-prompt` only |

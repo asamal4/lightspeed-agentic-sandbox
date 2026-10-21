@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import jsonschema
 import pytest
 from kubernetes.client import ApiException  # type: ignore[import-untyped]
 
@@ -23,6 +24,7 @@ from tests.e2e.batch_runner import (
     build_result_template,
     run_batch_query,
 )
+from tests.e2e.schemas_contract import ECHO_TOKEN_SCHEMA
 from tests.e2e.skills_fixtures import (
     E2E_POD_SKILLS_DIR,
     E2E_POD_SKILLS_SRC_DIR,
@@ -164,6 +166,54 @@ class TestSkillConfigMapKeys:
     def test_rejects_double_underscore_in_path(self) -> None:
         with pytest.raises(ValueError, match="must not contain '__'"):
             _cm_key_from_rel("docs/a__b.md")
+
+
+class TestEchoTokenSchema:
+    def test_echo_token_schema_accepts_32_character_lowercase_hex(self) -> None:
+        jsonschema.validate(
+            {
+                "summary": "argument:literal-test with spaces",
+                "token": "0123456789abcdef0123456789abcdef",
+                "status": "ok",
+            },
+            ECHO_TOKEN_SCHEMA,
+        )
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "a" * 31,
+            "a" * 33,
+            "1aefa1389b39d57d57d32a05b13b0f5cae6",
+            "A" * 32,
+            "g" * 32,
+        ],
+        ids=["too-short", "too-long", "ci-regression", "uppercase", "not-hex"],
+    )
+    def test_echo_token_schema_rejects_malformed_tokens(self, token: str) -> None:
+        with pytest.raises(jsonschema.ValidationError) as exc_info:
+            jsonschema.validate(
+                {"summary": "argument:literal-test with spaces", "token": token, "status": "ok"},
+                ECHO_TOKEN_SCHEMA,
+            )
+        assert list(exc_info.value.path) == ["token"]
+
+    def test_anthropic_conversion_enforces_e2e_token_length(self) -> None:
+        from pydantic import ValidationError
+
+        from lightspeed_agentic.providers.deepagents import _json_schema_to_pydantic
+
+        model = _json_schema_to_pydantic(ECHO_TOKEN_SCHEMA)
+        body = {
+            "summary": "argument:literal-test with spaces",
+            "token": "0123456789abcdef0123456789abcdef",
+            "status": "ok",
+        }
+        assert model.model_validate(body).model_dump() == body
+        invalid_body = {**body, "token": "1aefa1389b39d57d57d32a05b13b0f5cae6"}
+        with pytest.raises(ValidationError) as exc_info:
+            model.model_validate(invalid_body)
+        assert exc_info.value.errors()[0]["loc"] == ("token",)
 
 
 class TestParseEchoTokenFromPodLogs:

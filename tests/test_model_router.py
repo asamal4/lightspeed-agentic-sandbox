@@ -26,7 +26,7 @@ _ROUTES = [
     ("bedrock", None, "ANTHROPIC_MODEL", "deepagents"),
     ("vertex", "google", "GEMINI_MODEL", "deepagents"),
     ("vertex", "openai", "OPENAI_MODEL", "openai"),
-    ("openai", None, "OPENAI_MODEL", "openai"),
+    ("openai", None, "OPENAI_MODEL", "deepagents"),
     ("azure", None, "OPENAI_MODEL", "openai"),
 ]
 
@@ -100,7 +100,11 @@ def test_route_preserves_legacy_dispatch_and_model_precedence(
         assert route.model == expected_model
         assert route.model_parameters.model == expected_model
         expected_route = (
-            "anthropic" if provider == "anthropic" else f"{provider}/{family or 'anthropic'}"
+            "anthropic"
+            if provider == "anthropic"
+            else "openai"
+            if provider == "openai"
+            else f"{provider}/{family or 'anthropic'}"
         )
         assert route.route == expected_route
     else:
@@ -208,15 +212,15 @@ def test_model_routes_require_a_configured_model(provider: str, family: str | No
 
 
 @pytest.mark.parametrize(
-    ("provider", "family", "adapter", "model_env"),
+    ("provider", "family", "base_url"),
     [
-        ("vertex", "openai", "openai", "OPENAI_MODEL"),
-        ("openai", None, "openai", "OPENAI_MODEL"),
-        ("azure", None, "openai", "OPENAI_MODEL"),
+        ("vertex", "openai", "https://vertex-openai.example.test/v1"),
+        ("openai", None, "https://vllm.example.test/v1"),
+        ("azure", None, "https://azure.example.test"),
     ],
 )
-def test_openai_routes_return_sdk_with_configured_model(
-    provider: str, family: str | None, adapter: str, model_env: str
+def test_non_native_openai_routes_return_sdk_with_configured_model(
+    provider: str, family: str | None, base_url: str
 ) -> None:
     from lightspeed_agentic.providers.model_router import resolve_model_route
 
@@ -225,6 +229,7 @@ def test_openai_routes_return_sdk_with_configured_model(
             "LIGHTSPEED_PROVIDER": provider,
             "ANTHROPIC_MODEL": "must-not-be-copied",
             "LIGHTSPEED_MODEL": "configured-model",
+            "LIGHTSPEED_PROVIDER_URL": base_url,
             "AZURE_OPENAI_API_KEY": "test-key",
         }
     )
@@ -235,8 +240,75 @@ def test_openai_routes_return_sdk_with_configured_model(
 
     assert route is None
     assert isinstance(sdk, ResolvedSDK)
-    assert sdk.name == adapter
-    assert os.environ[model_env] == "configured-model"
+    assert sdk.name == "openai"
+    assert os.environ["OPENAI_MODEL"] == "configured-model"
+    if provider in {"vertex", "openai"}:
+        assert os.environ["OPENAI_BASE_URL"] == base_url
+    else:
+        assert "OPENAI_BASE_URL" not in os.environ
+    if provider == "vertex":
+        assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == str(
+            Path(os.environ["LIGHTSPEED_LLM_CREDENTIALS_PATH"]) / "GOOGLE_APPLICATION_CREDENTIALS"
+        )
+    else:
+        assert "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [None, "https://api.openai.com/v1", "https://API.OPENAI.COM/v1/"],
+)
+def test_native_openai_routes_to_deepagents(base_url: str | None) -> None:
+    from lightspeed_agentic.providers.model_router import (
+        ModelParameters,
+        ResolvedModelRoute,
+        resolve_model_route,
+    )
+    from lightspeed_agentic.providers.models.openai import create_native_openai_model
+
+    os.environ.update(
+        {
+            "LIGHTSPEED_PROVIDER": "openai",
+            "LIGHTSPEED_MODEL": "gpt-4.1-mini",
+            "OPENAI_API_KEY": "resolved-openai-key",
+        }
+    )
+    if base_url is not None:
+        os.environ["LIGHTSPEED_PROVIDER_URL"] = base_url
+
+    sdk, route = resolve_model_route()
+
+    assert sdk is None
+    assert isinstance(route, ResolvedModelRoute)
+    assert route.route == "openai"
+    assert route.model == "gpt-4.1-mini"
+    assert route.create_model is create_native_openai_model
+    assert route.model_parameters == ModelParameters(
+        model="gpt-4.1-mini",
+        base_url=base_url,
+        api_key="resolved-openai-key",
+    )
+    assert route.structured_output_schema_mode == "openai_strict_json_schema"
+    assert "OPENAI_MODEL" not in os.environ
+    assert "OPENAI_BASE_URL" not in os.environ
+
+
+def test_native_openai_rejects_http_endpoint_before_routing() -> None:
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    os.environ.update(
+        {
+            "LIGHTSPEED_PROVIDER": "openai",
+            "LIGHTSPEED_MODEL": "gpt-4.1-mini",
+            "LIGHTSPEED_PROVIDER_URL": "http://api.openai.com/v1",
+            "OPENAI_API_KEY": "resolved-openai-key",
+        }
+    )
+
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        resolve_model_route()
+
+    assert "OPENAI_BASE_URL" not in os.environ
 
 
 @pytest.mark.parametrize(
@@ -628,8 +700,15 @@ def test_router_preserves_credential_readiness(provider: str) -> None:
 
 
 @pytest.mark.parametrize("auth_mode", ["api_key", "entra_id"])
-def test_azure_returns_existing_sdk_configuration_and_credentials(
-    tmp_path: Path, auth_mode: str
+@pytest.mark.parametrize(
+    ("configured_api_version", "expected_api_version"),
+    [("2025-03-01-preview", "2025-03-01-preview"), (None, "2024-08-01-preview")],
+)
+def test_azure_legacy_route_applies_sdk_settings_and_credentials(
+    tmp_path: Path,
+    auth_mode: str,
+    configured_api_version: str | None,
+    expected_api_version: str,
 ) -> None:
     from lightspeed_agentic.providers.model_router import resolve_model_route
 
@@ -638,9 +717,10 @@ def test_azure_returns_existing_sdk_configuration_and_credentials(
             "LIGHTSPEED_PROVIDER": "azure",
             "LIGHTSPEED_MODEL": "azure-deployment",
             "LIGHTSPEED_PROVIDER_URL": "https://azure.example.test",
-            "LIGHTSPEED_PROVIDER_API_VERSION": "2025-03-01-preview",
         }
     )
+    if configured_api_version:
+        os.environ["LIGHTSPEED_PROVIDER_API_VERSION"] = configured_api_version
     if auth_mode == "entra_id":
         for name in ("client_id", "tenant_id", "client_secret"):
             (tmp_path / name).write_text(f"test-{name}")
@@ -653,14 +733,16 @@ def test_azure_returns_existing_sdk_configuration_and_credentials(
     assert isinstance(sdk, ResolvedSDK)
     assert sdk.name == "openai"
     assert sdk.azure_auth_mode == auth_mode
+    assert os.environ["OPENAI_MODEL"] == "azure-deployment"
     assert os.environ["AZURE_OPENAI_ENDPOINT"] == "https://azure.example.test"
-    assert os.environ["AZURE_OPENAI_API_VERSION"] == "2025-03-01-preview"
+    assert os.environ["AZURE_OPENAI_API_VERSION"] == expected_api_version
     if auth_mode == "entra_id":
         assert sdk.azure_credentials == {
             "client_id": "test-client_id",
             "tenant_id": "test-tenant_id",
             "client_secret": "test-client_secret",
         }
+        assert "AZURE_OPENAI_API_KEY" not in os.environ
     else:
         assert os.environ["AZURE_OPENAI_API_KEY"] == "test-key"
     assert run_readiness_checks(sdk)[0]
@@ -701,7 +783,7 @@ def test_router_does_not_import_optional_sdks_or_construct_models() -> None:
             "    resolve_model_route()\n"
             "assert not any(name.split('.')[0] in "
             "{'anthropic', 'langchain_anthropic', 'langchain_core', 'langchain_aws', "
-            "'langchain_google_vertexai', 'google', 'agents'} "
+            "'langchain_google_vertexai', 'langchain_openai', 'google', 'agents'} "
             "for name in set(sys.modules) - before)",
         ],
         capture_output=True,

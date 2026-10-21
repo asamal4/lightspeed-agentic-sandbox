@@ -7,6 +7,7 @@ The SDK handles tool registration, skill discovery, and command execution.
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
 import logging
@@ -449,7 +450,8 @@ class OpenAIProvider(AgentProvider):
             if credential is not None:
                 result = credential.close()
                 if inspect.isawaitable(result):
-                    await result
+                    with contextlib.suppress(BaseException):
+                        await result
 
     @property
     def name(self) -> str:

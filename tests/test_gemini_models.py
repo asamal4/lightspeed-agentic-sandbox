@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import ssl
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from google.auth.credentials import AnonymousCredentials
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -73,3 +75,84 @@ def test_vertex_gemini_model_leaves_adc_to_sdk_without_impersonation(
     assert model.vertexai is True
     assert model.credentials is None
     assert model.thinking_config is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_output_tokens", [None, 128], ids=["sdk-default", "classifier-limit"])
+async def test_classifier_output_budget_reaches_gemini_http_request(
+    monkeypatch: pytest.MonkeyPatch, max_output_tokens: int | None
+) -> None:
+    from lightspeed_agentic.inspection.client import LangChainClassifierClient
+    from lightspeed_agentic.inspection.models import ClassifierRequest
+
+    credentials = AnonymousCredentials()
+    credentials.token = "test-token"  # noqa: S105 - offline SDK credential
+    monkeypatch.setattr(cloud_credentials, "create_vertex_credentials", lambda _source: credentials)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "functionCall": {
+                                        "name": "ClassifierDecision",
+                                        "args": {"injectionDetected": False, "category": "none"},
+                                    }
+                                }
+                            ],
+                        },
+                        "finishReason": "STOP",
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 10,
+                    "candidatesTokenCount": 13,
+                    "totalTokenCount": 23,
+                },
+                "modelVersion": "gemini-2.5-flash",
+                "responseId": "gemini-classifier",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as async_client:
+        model = create_vertex_gemini_model(
+            ModelParameters(
+                model="gemini-2.5-flash",
+                provider=VertexProviderParameters(project="test-project", region="us-central1"),
+                credentials=VertexCredentialSource(Path("/unused/credentials.json")),
+                max_output_tokens=max_output_tokens,
+            )
+        )
+        # Replace only the HTTP transport, retaining SDK auth and serialization.
+        api_client = model.client._api_client
+        await api_client._async_httpx_client.aclose()
+        api_client._async_httpx_client = async_client
+        api_client._http_options.httpx_async_client = async_client
+        try:
+            decision = await LangChainClassifierClient(model).classify(
+                ClassifierRequest(
+                    toolName="probe",
+                    resultType="result",
+                    chunkIndex=0,
+                    chunkCount=1,
+                    content="safe",
+                )
+            )
+        finally:
+            model.client.close()
+            await model.client.aio.aclose()
+
+    assert decision.injection_detected is False
+    assert len(requests) == 1
+    body = json.loads(requests[0].content)
+    assert body.get("generationConfig", {}).get("maxOutputTokens") == max_output_tokens
+    assert not {"max_tokens", "max_completion_tokens", "max_output_tokens"} & body.keys()

@@ -22,7 +22,8 @@ from lightspeed_agentic.config import (
 )
 
 if TYPE_CHECKING:
-    from langchain_core.language_models import BaseChatModel
+    from langchain_core.language_models import BaseChatModel, LanguageModelInput
+    from langchain_core.runnables import Runnable
 
 
 ModelCreator = Callable[[ModelParameters, dict[str, Any] | None], "BaseChatModel"]
@@ -43,9 +44,12 @@ class ResolvedModelRoute:
     model_parameters: ModelParameters = field(repr=False)
     telemetry_provider: str
     structured_output_method: Literal["function_calling", "json_schema"]
-    structured_output_schema_mode: Literal[
-        "pydantic", "raw_json_schema", "openai_strict_json_schema"
-    ] = "pydantic"
+    structured_output_schema_mode: Literal["pydantic", "raw_json_schema"] = "pydantic"
+    translate_output_schema: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    bind_structured_output: (
+        Callable[[BaseChatModel, dict[str, Any]], Runnable[LanguageModelInput, dict[str, Any]]]
+        | None
+    ) = None
 
 
 def resolve_model_route(
@@ -66,13 +70,22 @@ def resolve_model_route(
         raise ValueError(f"No model configured for {model_family.name}")
     match model_family.name:
         case "openai":
-            if _uses_native_openai_endpoint(model_family):
-                from lightspeed_agentic.providers.models.openai import create_native_openai_model
+            if model_family.hosting == "openai":
+                from lightspeed_agentic.providers.models.openai import (
+                    bind_openai_compatible_output,
+                    create_native_openai_model,
+                    create_openai_compatible_model,
+                    native_openai_structured_output_schema,
+                    openai_compatible_structured_output_schema,
+                )
 
+                is_native = _uses_native_openai_endpoint(model_family)
                 return None, ResolvedModelRoute(
-                    route="openai",
+                    route="openai" if is_native else "openai-compatible",
                     model=effective_model,
-                    create_model=create_native_openai_model,
+                    create_model=(
+                        create_native_openai_model if is_native else create_openai_compatible_model
+                    ),
                     model_parameters=ModelParameters(
                         model=effective_model,
                         base_url=model_family.base_url,
@@ -80,10 +93,16 @@ def resolve_model_route(
                     ),
                     telemetry_provider="openai",
                     structured_output_method="json_schema",
-                    structured_output_schema_mode="openai_strict_json_schema",
+                    structured_output_schema_mode="raw_json_schema",
+                    translate_output_schema=(
+                        native_openai_structured_output_schema
+                        if is_native
+                        else openai_compatible_structured_output_schema
+                    ),
+                    bind_structured_output=None if is_native else bind_openai_compatible_output,
                 )
             # The legacy OpenAI adapter reads these SDK-specific settings from env.
-            if model_family.hosting in {"openai", "vertex"}:
+            if model_family.hosting == "vertex":
                 if model_family.model:
                     os.environ["OPENAI_MODEL"] = model_family.model
                 if model_family.base_url:

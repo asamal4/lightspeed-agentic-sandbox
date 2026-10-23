@@ -24,7 +24,19 @@ TOOL_DATA_TRUST_INSTRUCTION = (
 
 
 def _wrap_tool_output(content: Any, tool_name: str) -> str:
-    """Mark external tool content as untrusted reference data."""
+    """Render SDK text-only blocks as text, then mark external content as untrusted."""
+    if (
+        isinstance(content, list)
+        and content
+        and all(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+            and block.keys() <= {"type", "text", "id"}
+            for block in content
+        )
+    ):
+        content = "\n".join(block["text"] for block in content)
     escaped_content = re.sub(
         r"</tool_data",
         lambda match: f"<\\/{match.group(0)[2:]}",

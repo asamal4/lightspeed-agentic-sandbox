@@ -177,6 +177,70 @@ def test_run_readiness_checks_provider_env_fails(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize(
+    ("api_key", "expected_ready"),
+    [(None, False), ("", False), ("   \t\n", False), ("resolved-key", True), ("EMPTY", True)],
+)
+@pytest.mark.parametrize(
+    ("route_id", "base_url"),
+    [("openai", None), ("openai-compatible", "https://vllm.example.test/v1")],
+)
+def test_openai_readiness_validates_resolved_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    api_key: str | None,
+    expected_ready: bool,
+    route_id: str,
+    base_url: str | None,
+) -> None:
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-key-must-not-replace-resolved-key")
+    family = ResolvedModelFamily(
+        "openai",
+        ("OPENAI_API_KEY",),
+        hosting="openai",
+        model="test-model",
+        api_key=api_key,
+        base_url=base_url,
+    )
+    _sdk, route = resolve_model_route(model_family=family)
+
+    assert route is not None
+    ready, checks = run_readiness_checks(family, route)
+
+    assert route.route == route_id
+    assert ready is expected_ready
+    expected_status = "ok" if expected_ready else f"error: missing API key for {route_id}"
+    assert checks == {"provider_env": "ok", "model_route": expected_status}
+
+
+@pytest.mark.parametrize("base_url", [None, "", "   "])
+def test_compatible_openai_readiness_requires_resolved_base_url(base_url: str | None) -> None:
+    from dataclasses import replace
+
+    from lightspeed_agentic.providers.model_router import resolve_model_route
+
+    family = ResolvedModelFamily(
+        "openai",
+        (),
+        hosting="openai",
+        model="test-model",
+        base_url="https://vllm.example.test/v1",
+        api_key="EMPTY",
+    )
+    _sdk, route = resolve_model_route(model_family=family)
+    assert route is not None
+    route = replace(route, model_parameters=replace(route.model_parameters, base_url=base_url))
+
+    ready, checks = run_readiness_checks(family, route)
+
+    assert ready is False
+    assert checks == {
+        "provider_env": "ok",
+        "model_route": "error: missing base URL for openai-compatible",
+    }
+
+
+@pytest.mark.parametrize(
     ("missing_source", "expected_route_status"),
     [
         (True, "error: missing credential source for anthropic"),

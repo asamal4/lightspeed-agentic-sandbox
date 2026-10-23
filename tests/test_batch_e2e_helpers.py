@@ -41,6 +41,31 @@ from tests.e2e.suite_setup import (
 )
 
 
+@pytest.mark.parametrize(
+    ("provider_name", "supported"),
+    [
+        ("anthropic-vertex-deepagents", True),
+        ("anthropic-bedrock-deepagents", True),
+        ("anthropic-deepagents", True),
+        ("openai-agents", True),
+        ("azure-openai-agents", False),
+    ],
+)
+def test_inspection_provider_guard_admits_migrated_openai_but_not_legacy_azure(
+    monkeypatch: pytest.MonkeyPatch, provider_name: str, supported: bool
+) -> None:
+    pytest.importorskip("pytest_bdd")
+    monkeypatch.syspath_prepend(str(Path(__file__).parent / "e2e"))
+    from tests.e2e.steps.given import provider_supports_tool_result_inspection
+
+    try:
+        provider_supports_tool_result_inspection(provider_name)
+    except pytest.skip.Exception:
+        assert not supported, f"DeepAgents provider {provider_name} was incorrectly skipped"
+    else:
+        assert supported, f"Legacy provider {provider_name} was incorrectly admitted"
+
+
 class TestBuildResultTemplate:
     def test_analysis_template(self) -> None:
         tmpl = build_result_template(

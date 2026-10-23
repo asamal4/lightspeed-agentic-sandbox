@@ -541,6 +541,7 @@ async def test_close_model_clients_closes_only_initialized_clients() -> None:
         ("vertex/anthropic", "gcp.vertex_ai", "json_schema"),
         ("vertex/google", "gcp.vertex_ai", "json_schema"),
         ("openai", "openai", "json_schema"),
+        ("openai-compatible", "openai", "json_schema"),
         ("bedrock/anthropic", "aws.bedrock", "function_calling"),
     ],
 )
@@ -552,6 +553,10 @@ async def test_resolved_route_controls_all_model_roles(
     reasoning: dict[str, Any] | None,
 ) -> None:
     from lightspeed_agentic.providers import deepagents as mod
+    from lightspeed_agentic.providers.models.openai import (
+        native_openai_structured_output_schema,
+        openai_compatible_structured_output_schema,
+    )
 
     # Routing has already happened; conflicting stale env flags must be irrelevant.
     monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "1")
@@ -590,11 +595,13 @@ async def test_resolved_route_controls_all_model_roles(
         structured_output_method=method,
         structured_output_schema_mode=(
             "raw_json_schema"
-            if route_id == "vertex/google"
-            else "openai_strict_json_schema"
-            if route_id == "openai"
+            if route_id in {"vertex/google", "openai", "openai-compatible"}
             else "pydantic"
         ),
+        translate_output_schema={
+            "openai": native_openai_structured_output_schema,
+            "openai-compatible": openai_compatible_structured_output_schema,
+        }.get(route_id),
     )
     schema = {
         "type": "object",
@@ -626,22 +633,26 @@ async def test_resolved_route_controls_all_model_roles(
             ),
         )
 
+    assert route.model_parameters.max_output_tokens is None
     assert create_model.call_args_list == [
         call(route.model_parameters, reasoning),
-        call(route.model_parameters, None),
+        call(replace(route.model_parameters, max_output_tokens=128), None),
         call(route.model_parameters, None),
     ]
     assert create_agent.call_args.kwargs["model"] is main_model
     assert "response_format" not in create_agent.call_args.kwargs
     format_model.with_structured_output.assert_called_once()
     shaping_schema = format_model.with_structured_output.call_args.args[0]
-    if route.structured_output_schema_mode == "raw_json_schema":
-        assert shaping_schema is schema
-    elif route.structured_output_schema_mode == "openai_strict_json_schema":
+    if route_id == "openai":
         assert shaping_schema["name"] == "structured_output"
         assert shaping_schema["strict"] is True
         assert shaping_schema["schema"]["properties"]["status"] == {"type": "string"}
         assert shaping_schema["schema"]["additionalProperties"] is False
+    elif route_id == "openai-compatible":
+        assert shaping_schema == {"name": "structured_output", "schema": schema, "strict": False}
+        assert shaping_schema["schema"] is schema
+    elif route.structured_output_schema_mode == "raw_json_schema":
+        assert shaping_schema is schema
     else:
         assert isinstance(shaping_schema, type)
     assert format_model.with_structured_output.call_args.kwargs == {
@@ -886,8 +897,78 @@ class TestJsonSchemaToPydantic:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("parsed", [None, {"success": False}])
-async def test_shaping_prompt_requests_native_json_types_once(parsed: Any) -> None:
+@pytest.mark.parametrize(
+    ("schema", "parsed", "reject_remote"),
+    [
+        ({"type": "object", "properties": {}, "additionalProperties": False}, {}, False),
+        (
+            {
+                "$defs": {"flag": {"type": "boolean"}},
+                "type": "object",
+                "properties": {"flag": {"$ref": "#/$defs/flag"}},
+                "required": ["flag"],
+            },
+            {"flag": False},
+            False,
+        ),
+        ({"$ref": "https://schemas.example.test/remote.json"}, {"flag": False}, True),
+    ],
+)
+async def test_raw_shaping_validates_locally_without_rejecting_falsy_values(
+    monkeypatch: pytest.MonkeyPatch, schema: dict[str, Any], parsed: Any, reject_remote: bool
+) -> None:
+    import urllib.request
+
+    from langchain_core.messages import AIMessage
+    from referencing.exceptions import Unresolvable
+
+    from lightspeed_agentic.providers.deepagents import _shape_structured_output
+
+    def forbid_fetch(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("Shaping must not fetch schema references")
+
+    monkeypatch.setattr(urllib.request, "urlopen", forbid_fetch)
+    model = MagicMock()
+    model.with_structured_output.return_value.ainvoke = AsyncMock(
+        return_value={
+            "parsed": parsed,
+            "raw": AIMessage(content=json.dumps(parsed)),
+            "parsing_error": None,
+        }
+    )
+    route = replace(
+        make_model_route(Mock(return_value=model)),
+        structured_output_schema_mode="raw_json_schema",
+        structured_output_method="json_schema",
+    )
+    if reject_remote:
+        with pytest.raises(Unresolvable):
+            await _shape_structured_output(route, schema, "sys", "ask", "answer", Mock())
+    else:
+        result, _, _ = await _shape_structured_output(route, schema, "sys", "ask", "answer", Mock())
+        assert result == parsed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sdk_result", "raises_error"),
+    [
+        pytest.param({"parsed": None}, True, id="missing-output"),
+        pytest.param({"parsed": {"success": False, "actionsTaken": []}}, False, id="valid-output"),
+        pytest.param(
+            {
+                "parsed": {"success": False, "actionsTaken": []},
+                "parsing_error": ValueError("invalid"),
+            },
+            True,
+            id="reported-parser-error",
+        ),
+        pytest.param({}, True, id="missing-envelope"),
+    ],
+)
+async def test_shaping_prompt_requests_native_json_types_once(
+    sdk_result: dict[str, Any], raises_error: bool
+) -> None:
     """Shaping uses one call, even when the result cannot be parsed."""
     from langchain_anthropic.chat_models import convert_to_anthropic_tool
     from langchain_core.messages import AIMessage
@@ -913,25 +994,26 @@ async def test_shaping_prompt_requests_native_json_types_once(parsed: Any) -> No
     schema_model = mod._json_schema_to_pydantic(execution_schema)
 
     bound = MagicMock()
-    bound.ainvoke = AsyncMock(
-        return_value={
-            "parsed": parsed,
-            "raw": AIMessage(content=""),
-            "parsing_error": ValueError("invalid") if parsed is None else None,
-        }
-    )
+    bound.ainvoke = AsyncMock(return_value={**sdk_result, "raw": AIMessage(content="")})
     model = MagicMock()
     model.with_structured_output.return_value = bound
-    result, _, _ = await mod._shape_structured_output(
-        make_model_route(Mock(return_value=model), model="claude-sonnet-5"),
-        schema_model,
-        "sys",
-        "ask",
-        "agent report",
-        Mock(),
-    )
 
-    assert result == parsed
+    async def shape() -> Any:
+        result, _, _ = await mod._shape_structured_output(
+            make_model_route(Mock(return_value=model), model="claude-sonnet-5"),
+            schema_model,
+            "sys",
+            "ask",
+            "agent report",
+            Mock(),
+        )
+        return result
+
+    if raises_error:
+        with pytest.raises(ValueError, match="Structured output"):
+            await shape()
+    else:
+        assert await shape() == {"success": False, "actionsTaken": []}
     bound.ainvoke.assert_awaited_once()
     tool_schema = convert_to_anthropic_tool(model.with_structured_output.call_args.args[0])[
         "input_schema"
@@ -1025,14 +1107,15 @@ class TestEventMapping:
         assert result_events[0].text == "Hello world"
 
     @pytest.mark.asyncio
-    async def test_plain_content_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize("text", ["Plain fallback text", "[]"])
+    async def test_plain_content_fallback(self, monkeypatch: pytest.MonkeyPatch, text: str) -> None:
         """Messages without content_blocks fall back to plain msg.content."""
         monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
         monkeypatch.delenv("CLAUDE_CODE_USE_BEDROCK", raising=False)
 
         mock_ai_message = MagicMock()
         mock_ai_message.type = "ai"
-        mock_ai_message.content = "Plain fallback text"
+        mock_ai_message.content = text
         mock_ai_message.tool_calls = []
         mock_ai_message.usage_metadata = {"input_tokens": 3, "output_tokens": 2}
         mock_ai_message.content_blocks = []
@@ -1049,8 +1132,8 @@ class TestEventMapping:
         text_events = [e for e in events if isinstance(e, TextDeltaEvent)]
         result_events = [e for e in events if isinstance(e, ResultEvent)]
         assert len(text_events) == 1
-        assert text_events[0].text == "Plain fallback text"
-        assert result_events[0].text == "Plain fallback text"
+        assert text_events[0].text == text
+        assert result_events[0].text == text
 
     @pytest.mark.asyncio
     async def test_thinking_events(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1145,9 +1228,10 @@ class TestEventMapping:
         assert len(tool_results) == 1
         assert "file1.py" in tool_results[0].output
 
+    @pytest.mark.parametrize("error_as_text_blocks", [False, True])
     @pytest.mark.asyncio
     async def test_main_agent_receives_wrapped_tool_result_and_emits_raw_event(
-        self, span_exporter
+        self, span_exporter, error_as_text_blocks: bool
     ) -> None:
         from langchain.agents.middleware import ModelRequest
         from langchain_core.messages import ToolMessage
@@ -1155,7 +1239,13 @@ class TestEventMapping:
 
         from lightspeed_agentic.audit import AuditLogger
 
-        raw_results = ["built-in output", "admitted MCP output", "tool failure details"]
+        raw_results: list[Any] = [
+            "built-in output",
+            "admitted MCP output",
+            [{"type": "text", "text": "tool failure details", "id": "lc-mcp-error"}]
+            if error_as_text_blocks
+            else "tool failure details",
+        ]
         tool_names = ["execute", "get_pod", "list_pods"]
         call_ids = ["call-execute", "call-get-pod", "call-list-pods"]
         tool_results = [
@@ -1238,8 +1328,9 @@ class TestEventMapping:
             )
 
         assert [message.content for message in model_inputs] == [
-            f'<tool_data source="{name}">\n{content}\n</tool_data>'
-            for name, content in zip(tool_names, raw_results, strict=True)
+            '<tool_data source="execute">\nbuilt-in output\n</tool_data>',
+            '<tool_data source="get_pod">\nadmitted MCP output\n</tool_data>',
+            '<tool_data source="list_pods">\ntool failure details\n</tool_data>',
         ]
         assert [message.tool_call_id for message in model_inputs] == call_ids
         assert mock_create.call_args.kwargs["tools"] == allowed_tools
@@ -1248,7 +1339,14 @@ class TestEventMapping:
         tool_result_events = [event for event in events if isinstance(event, ToolResultEvent)]
         assert [event.name for event in tool_call_events] == tool_names
         assert [event.call_id for event in tool_call_events] == call_ids
-        assert [event.output for event in tool_result_events] == raw_results
+        expected_result_outputs = [
+            "built-in output",
+            "admitted MCP output",
+            '[{"type": "text", "text": "tool failure details", "id": "lc-mcp-error"}]'
+            if error_as_text_blocks
+            else "tool failure details",
+        ]
+        assert [event.output for event in tool_result_events] == expected_result_outputs
         assert [event.error_type for event in tool_result_events] == [None, None, "tool_error"]
         assert [event.call_id for event in tool_result_events] == call_ids
         event_types = [event.type for event in events]

@@ -1906,6 +1906,7 @@ all = [
     { name = "azure-identity" },
     { name = "deepagents" },
     { name = "google-adk" },
+    { name = "jsonschema" },
     { name = "langchain-anthropic" },
     { name = "langchain-aws" },
     { name = "langchain-google-genai" },
@@ -1913,15 +1914,18 @@ all = [
     { name = "langchain-mcp-adapters" },
     { name = "langchain-openai" },
     { name = "openai-agents" },
+    { name = "referencing" },
 ]
 deepagents = [
     { name = "anthropic" },
     { name = "deepagents" },
+    { name = "jsonschema" },
     { name = "langchain-anthropic" },
     { name = "langchain-aws" },
     { name = "langchain-google-genai" },
     { name = "langchain-google-vertexai" },
     { name = "langchain-mcp-adapters" },
+    { name = "referencing" },
 ]
 dev = [
     { name = "aiohttp" },
@@ -1930,6 +1934,7 @@ dev = [
     { name = "deepagents" },
     { name = "google-adk" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "langchain-anthropic" },
     { name = "langchain-aws" },
     { name = "langchain-google-genai" },
@@ -1940,6 +1945,7 @@ dev = [
     { name = "openai-agents" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "referencing" },
     { name = "ruff" },
 ]
 e2e = [
@@ -1970,6 +1976,7 @@ requires-dist = [
     { name = "google-adk", marker = "extra == 'gemini'", specifier = ">=1.33.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'e2e'", specifier = ">=0.28.1" },
+    { name = "jsonschema", marker = "extra == 'deepagents'", specifier = ">=4.26.0" },
     { name = "jsonschema", marker = "extra == 'e2e'", specifier = ">=4.26.0" },
     { name = "kubernetes", specifier = ">=32.0.0" },
     { name = "kubernetes", marker = "extra == 'e2e'", specifier = ">=32.0.0" },
@@ -1995,6 +2002,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'e2e'", specifier = ">=1.3.0" },
     { name = "pytest-bdd", marker = "extra == 'e2e'", specifier = ">=8.1.0" },
     { name = "pytest-timeout", marker = "extra == 'e2e'", specifier = ">=2.4.0" },
+    { name = "referencing", marker = "extra == 'deepagents'", specifier = ">=0.37.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.12" },
 ]
 provides-extras = ["deepagents", "gemini", "openai", "all", "dev", "e2e"]

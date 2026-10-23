@@ -4,7 +4,6 @@ Feature: Tool-result safety inspection
 
   Scenario: MCP tool output is inspected before the model uses it
     Given tool-result inspection is enabled for the batch Job
-    And the selected provider supports tool-result inspection
     And the OTEL collector is available for telemetry verification
     And the sandbox service is running with MCP servers configured
     And an MCP tool invocation query has been prepared
@@ -16,7 +15,6 @@ Feature: Tool-result safety inspection
 
   Scenario: Malicious MCP tool output is rejected before model use
     Given tool-result inspection is enabled for the batch Job
-    And the selected provider supports tool-result inspection
     And the OTEL collector is available for telemetry verification
     And the sandbox service is running with MCP servers configured
     And a malicious MCP tool-result query has been prepared

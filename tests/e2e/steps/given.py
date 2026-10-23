@@ -283,17 +283,6 @@ def tool_result_inspection_is_enabled(bdd_context: dict[str, Any]) -> None:
     }
 
 
-@given("the selected provider supports tool-result inspection")
-def provider_supports_tool_result_inspection(provider_name: str) -> None:
-    if provider_name not in {
-        "anthropic-vertex-deepagents",
-        "anthropic-bedrock-deepagents",
-        "anthropic-deepagents",
-        "openai-agents",
-    }:
-        pytest.skip("tool-result inspection e2e coverage currently targets DeepAgents")
-
-
 @given("the sandbox service is running with MCP servers configured")
 def sandbox_running_with_mcp(batch_e2e_config: BatchE2EConfig) -> None:
     import json as _json

@@ -55,6 +55,7 @@ class AuditLogger:
         enabled: bool = True,
         capture_content: bool = False,
         agenticrun_uid: str = "",
+        capture_tool_spans: bool = True,
     ) -> None:
         """Configure audit emission for one agent run.
 
@@ -67,6 +68,7 @@ class AuditLogger:
         self._provider = provider
         self._enabled = enabled
         self._capture_content = capture_content
+        self._capture_tool_spans = capture_tool_spans
         self._agenticrun_uid = agenticrun_uid
         self._text_buffer: list[str] = []
         self._thinking_buffer: list[str] = []
@@ -90,6 +92,8 @@ class AuditLogger:
                 self._flush_buffers()
             case "tool_call":
                 self._flush_buffers()
+                if not self._capture_tool_spans:
+                    return
                 call_key = event.call_id or self._next_call_id
                 if not event.call_id:
                     self._next_call_id += 1
@@ -118,6 +122,8 @@ class AuditLogger:
                 )
                 self._tool_spans[call_key] = (span, time.monotonic())
             case "tool_result":
+                if not self._capture_tool_spans:
+                    return
                 call_id = event.call_id
                 if call_id:
                     entry = self._tool_spans.pop(call_id, None)

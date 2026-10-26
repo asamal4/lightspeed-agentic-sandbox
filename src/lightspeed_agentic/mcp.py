@@ -22,6 +22,22 @@ logger = logging.getLogger("lightspeed_agentic")
 SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"  # noqa: S105
 MCP_SECRET_MOUNT_ROOT = "/var/secrets/mcp"  # noqa: S105
 
+# Keep aligned with the DeepAgents shell/filesystem, delegation, and planning tools.
+RESERVED_BUILTIN_TOOL_NAMES = frozenset(
+    {
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "delete",
+        "glob",
+        "grep",
+        "execute",
+        "task",
+        "write_todos",
+    }
+)
+
 
 class MCPConfigError(ValueError):
     """``LIGHTSPEED_MCP_SERVERS`` is set but not valid JSON array configuration."""
@@ -290,6 +306,14 @@ def _admit_discovered_tools(
     """Convert and filter one server's discovered SDK tools."""
     admitted_tools: list[AdmittedMCPTool] = []
     for tool in tools:
+        if tool.name in RESERVED_BUILTIN_TOOL_NAMES:
+            logger.warning(
+                "Filtered MCP tool server=%s tool=%s auth_class=%s reason=builtin_name_collision",
+                server.name,
+                tool.name,
+                server.auth_class.value,
+            )
+            continue
         metadata = getattr(tool, "metadata", None)
         if not isinstance(metadata, dict):
             metadata = {}
@@ -338,8 +362,8 @@ async def discover_and_admit_mcp_server(
     """Discover and admit tools from one server.
 
     A connection or ``tools/list`` failure omits this server rather than
-    failing the batch. Filtered tools are never included in the result, and a
-    server with no remaining tools returns ``None``.
+    failing the batch. Built-in name collisions and tools failing RBAC admission
+    are filtered from the result; a server with no remaining tools returns ``None``.
     """
     from langchain_mcp_adapters.client import MultiServerMCPClient
 

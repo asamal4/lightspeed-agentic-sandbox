@@ -144,7 +144,6 @@ class TestSkillMaterializeScript:
         assert "! -name '..*'" in script
         assert "/mnt/e2e-skills-src" in script
         assert "/app/skills" in script
-        assert "/app/skills/.agents" in script
 
     def test_skips_kubelet_configmap_directories(self, tmp_path: Path) -> None:
         src_root = tmp_path / "src"
@@ -165,6 +164,7 @@ class TestSkillMaterializeScript:
             check=True,
         )
 
+        assert sorted(path.name for path in dest_root.iterdir()) == ["find-token"]
         copied = dest_root / "find-token"
         assert (copied / "SKILL.md").read_text(encoding="utf-8") == "skill body\n"
         assert (copied / "scripts" / "find-token.sh").read_text(encoding="utf-8") == "echo token\n"
@@ -445,6 +445,25 @@ class TestBuildJobSpec:
     def _env(self, job: Any) -> dict[str, str]:
         env = job.spec["template"]["spec"]["containers"][0]["env"]
         return {item["name"]: item["value"] for item in env}
+
+    def test_skill_sources_are_read_only_after_materialization(self) -> None:
+        job = _build_job_spec(
+            self._config(),
+            "job-name",
+            "input-cm",
+            {"app": "test"},
+            "run-uid",
+            "analysis",
+            skill_configmaps={"find-token": "skill-cm"},
+        )
+        pod = job.spec["template"]["spec"]
+        agent_mounts = {mount["name"]: mount for mount in pod["containers"][0]["volumeMounts"]}
+        init_mounts = {mount["name"]: mount for mount in pod["initContainers"][0]["volumeMounts"]}
+
+        assert agent_mounts["skills-root"]["mountPath"] == E2E_POD_SKILLS_DIR
+        assert agent_mounts["skills-root"]["readOnly"] is True
+        assert init_mounts["skills-root"].get("readOnly", False) is False
+        assert agent_mounts["e2e-output"].get("readOnly", False) is False
 
     def test_session_job_env_does_not_enable_tool_output_inspection(self) -> None:
         assert "LIGHTSPEED_TOOL_OUTPUT_INSPECTION_ENABLED" not in _session_job_env()

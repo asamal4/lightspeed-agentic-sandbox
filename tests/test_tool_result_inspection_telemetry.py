@@ -81,7 +81,6 @@ async def test_benign_span_contains_only_controlled_metadata(
         codec=CharacterCodec(),
         context_window_tokens=640,
         instruction_tokens=20,
-        output_tokens=20,
         tracer=tracer,
         provider="anthropic",
         model="model-name",
@@ -112,7 +111,6 @@ async def test_malicious_span_has_category_but_no_content(caplog: pytest.LogCapt
         codec=CharacterCodec(),
         context_window_tokens=640,
         instruction_tokens=20,
-        output_tokens=20,
         tracer=tracer,
         sleep=no_sleep,
     )
@@ -143,7 +141,6 @@ async def test_classifier_error_telemetry_is_controlled(caplog: pytest.LogCaptur
             codec=CharacterCodec(),
             context_window_tokens=640,
             instruction_tokens=20,
-            output_tokens=20,
             tracer=tracer,
             sleep=no_sleep,
         )
@@ -186,7 +183,6 @@ async def test_invalid_response_records_only_bounded_shape(
             codec=CharacterCodec(),
             context_window_tokens=640,
             instruction_tokens=20,
-            output_tokens=20,
             tracer=tracer,
             sleep=no_sleep,
         )
@@ -259,7 +255,6 @@ async def test_rejected_classifier_attempts_are_monitorable_without_payloads(
         codec=CharacterCodec(),
         context_window_tokens=8192,
         instruction_tokens=20,
-        output_tokens=4096,
         tracer=tracer,
         sleep=no_sleep,
     )
@@ -296,7 +291,7 @@ async def test_rejected_classifier_attempts_are_monitorable_without_payloads(
     if not recover:
         assert "attempts=3" in final_warning.getMessage()
         assert f"response_issue={issue}" in final_warning.getMessage()
-    assert tracer.spans[0].attributes["inspection.output_token_limit"] == 4096
+    assert "inspection.output_token_limit" not in tracer.spans[0].attributes
     assert model.calls == (2 if recover else 3)
     evidence = repr([record.__dict__ for record in caplog.records]) + repr(
         tracer.spans[0].attributes
@@ -335,7 +330,6 @@ async def test_provider_error_telemetry_contains_safe_http_metadata(
             codec=CharacterCodec(),
             context_window_tokens=640,
             instruction_tokens=20,
-            output_tokens=20,
             tracer=tracer,
             sleep=no_sleep,
         )
@@ -442,7 +436,6 @@ async def test_native_azure_http_errors_have_safe_failure_diagnostics(
                     base_url="https://azure.example.test",
                     provider=AzureProviderParameters(api_version),
                     credentials=AzureApiKeyCredentialSource("PRIVATE-API-KEY"),
-                    max_output_tokens=4096,
                 )
             )
             model.disable_streaming = True
@@ -456,7 +449,6 @@ async def test_native_azure_http_errors_have_safe_failure_diagnostics(
                         codec=CharacterCodec(),
                         context_window_tokens=8192,
                         instruction_tokens=20,
-                        output_tokens=4096,
                         tracer=trace.get_tracer("test-inspection"),
                         sleep=record_sleep,
                     )
@@ -614,7 +606,6 @@ async def test_classifier_error_span_does_not_export_raw_exception(span_exporter
             codec=CharacterCodec(),
             context_window_tokens=640,
             instruction_tokens=20,
-            output_tokens=20,
             tracer=trace.get_tracer("test-inspection"),
             sleep=no_sleep,
         )

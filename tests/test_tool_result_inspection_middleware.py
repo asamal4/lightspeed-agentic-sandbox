@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from lightspeed_agentic.inspection.errors import InspectionError
 from lightspeed_agentic.inspection.middleware import (
@@ -20,6 +20,78 @@ class ModelRequest:
 
     def override(self, **changes: Any) -> ModelRequest:
         return ModelRequest(changes.get("messages", self.messages))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["cancellation", "inspection", "tool_execution"])
+async def test_tool_boundary_preserves_control_failures(failure: str) -> None:
+    from lightspeed_agentic.types import ToolExecutionError
+
+    error = {
+        "cancellation": asyncio.CancelledError(),
+        "inspection": ToolResultSafetyInspectionFailed(),
+        "tool_execution": ToolExecutionError(tool_name="child_tool", error_type="ValueError"),
+    }[failure]
+
+    async def handler(_request: Any) -> Any:
+        raise error
+
+    with pytest.raises(type(error)) as raised:
+        await ToolResultInspectionMiddleware().awrap_tool_call(
+            SimpleNamespace(tool_call={"name": "task"}), handler
+        )
+    assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_acceptance_notification_is_atomic_for_each_boundary() -> None:
+    notifications: list[tuple[Any, ...]] = []
+    inspected: list[str] = []
+
+    async def inspect(_tool: str, _kind: str, content: Any, _id: str) -> Any:
+        inspected.append(content)
+        return SimpleNamespace(passed=content != "rejected")
+
+    middleware = ToolResultInspectionMiddleware(
+        inspect, on_accepted=lambda messages: notifications.append(tuple(messages))
+    )
+    approved = ToolMessage(content="approved", name="execute", tool_call_id="one")
+    rejected = ToolMessage(content="rejected", name="execute", tool_call_id="two")
+    with pytest.raises(ToolResultSafetyInspectionFailed):
+        await middleware.awrap_model_call(ModelRequest([approved, rejected]), _identity_handler)
+    assert notifications == []  # Passing a sibling does not release it early.
+
+    await middleware.awrap_model_call(ModelRequest([approved]), _identity_handler)
+    await middleware.awrap_model_call(ModelRequest([approved]), _identity_handler)
+    assert notifications == [(approved,), (approved,)]
+    assert inspected == ["approved", "rejected"]  # Only real classifier passes are cached.
+
+
+@pytest.mark.asyncio
+async def test_concurrent_boundaries_publish_independent_acceptance_notifications() -> None:
+    notifications: list[tuple[Any, ...]] = []
+    slow_started = asyncio.Event()
+    finish_slow = asyncio.Event()
+
+    async def inspect(_tool: str, _kind: str, content: Any, _id: str) -> None:
+        if content == "slow":
+            slow_started.set()
+            await finish_slow.wait()
+
+    middleware = ToolResultInspectionMiddleware(
+        inspect, on_accepted=lambda messages: notifications.append(tuple(messages))
+    )
+    slow = ToolMessage(content="slow", name="execute", tool_call_id="slow-id")
+    fast = ToolMessage(content="fast", name="execute", tool_call_id="fast-id")
+    task = asyncio.create_task(middleware.awrap_model_call(ModelRequest([slow]), _identity_handler))
+    try:
+        await slow_started.wait()
+        await middleware.awrap_model_call(ModelRequest([fast]), _identity_handler)
+        assert notifications == [(fast,)]
+    finally:
+        finish_slow.set()
+        await task
+    assert notifications == [(fast,), (slow,)]
 
 
 @pytest.mark.asyncio
@@ -55,7 +127,6 @@ async def test_model_boundary_inspects_raw_then_wraps_tool_output() -> None:
     assert passed_to_model[0].content == expected
     assert passed_to_model[0] is not request.messages[0]
     assert request.messages[0].content == "pod output"
-    assert middleware.is_passed("get_pods", "result", "call-1", "pod output")
 
 
 @pytest.mark.asyncio
@@ -169,7 +240,6 @@ async def test_model_boundary_renders_text_blocks_without_changing_raw_result(
     assert original.content == raw_content
     result_type = "error" if status == "error" else "result"
     assert observed == ([("fail_probe", result_type, raw_content)] if inspection_enabled else [])
-    assert middleware.is_passed("fail_probe", result_type, "call-mcp-error", original.content)
 
 
 @pytest.mark.parametrize(
@@ -345,10 +415,16 @@ async def test_model_boundary_inspects_tool_error_as_error() -> None:
         ]
     )
 
+    async def handled_error(_request: Any) -> ToolMessage:
+        return request.messages[0]
+
+    result = await middleware.awrap_tool_call(
+        SimpleNamespace(tool_call={"name": "execute"}), handled_error
+    )
+    assert result is request.messages[0]
     await middleware.awrap_model_call(request, _identity_handler)
 
     assert observed == [("execute", "error", "command failed")]
-    assert middleware.is_passed("execute", "error", "call-2", "command failed")
 
 
 @pytest.mark.asyncio
@@ -382,8 +458,6 @@ async def test_model_boundary_reinspects_changed_content_with_same_id() -> None:
         ("execute", "result", "before"),
         ("execute", "result", "after"),
     ]
-    assert middleware.is_passed("execute", "result", "call-4", "before")
-    assert middleware.is_passed("execute", "result", "call-4", "after")
 
 
 @pytest.mark.asyncio
@@ -403,8 +477,6 @@ async def test_model_boundary_inspects_messages_without_call_ids_per_tool() -> N
         ("execute", "result", "same"),
         ("read_file", "result", "same"),
     ]
-    assert middleware.is_passed("execute", "result", "", "same")
-    assert middleware.is_passed("read_file", "result", "", "same")
 
 
 @pytest.mark.asyncio
@@ -431,7 +503,6 @@ async def test_inspection_failure_prevents_model_call_and_is_payload_free() -> N
     assert str(error.value) == "ToolResultSafetyInspectionFailed"
     assert "sensitive" not in str(error.value)
     assert "secret" not in str(error.value)
-    assert not middleware.is_passed("execute", "result", "call-5", "sensitive result")
 
 
 @pytest.mark.asyncio
@@ -517,6 +588,156 @@ async def test_model_boundary_wraps_offload_preview_and_artifact_read(tmp_path: 
         f'<tool_data source="read_file">\n{original.content}\n</tool_data>'
     )
     assert artifact_message.content == original.content
+
+
+def test_filter_untrusted_tool_results_preserves_context_and_selects_external_results() -> None:
+    from lightspeed_agentic.inspection.middleware import filter_untrusted_tool_results
+
+    call = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "read_file", "args": {"file_path": "/skills/network/SKILL.md"}, "id": "skill"},
+            {
+                "name": "execute",
+                "args": {"command": "bash /skills/network/check.sh"},
+                "id": "shell",
+            },
+        ],
+    )
+    skill = ToolMessage(content="trusted instructions", name="read_file", tool_call_id="skill")
+    shell = ToolMessage(content="external output", name="execute", tool_call_id="shell")
+    mcp = ToolMessage(content="MCP output", name="get_pods", tool_call_id="mcp")
+    messages = [call, skill, shell, mcp]
+
+    selected = filter_untrusted_tool_results(messages)
+
+    assert len(selected) == 2
+    assert selected[0] is shell
+    assert selected[1] is mcp
+    assert messages == [call, skill, shell, mcp]
+    assert skill.content == "trusted instructions"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "/skills/network/SKILL.md",
+        "/skills/network/references/guide.md",
+        "/skills/network/scripts/check.sh",
+    ],
+)
+async def test_trusted_skill_reads_bypass_inspection_and_wrapping(
+    file_path: str, enabled: bool
+) -> None:
+    observed: list[tuple[str, str, Any]] = []
+    accepted: list[tuple[Any, ...]] = []
+    middleware = ToolResultInspectionMiddleware(
+        (lambda tool, kind, content, _id: _record(observed, tool, kind, content))
+        if enabled
+        else None,
+        on_accepted=lambda messages: accepted.append(tuple(messages)),
+    )
+    call = AIMessage(
+        content="",
+        tool_calls=[{"name": "read_file", "args": {"file_path": file_path}, "id": "skill-read"}],
+    )
+    result = ToolMessage(
+        content="Follow these skill instructions.", name="read_file", tool_call_id="skill-read"
+    )
+    captured: list[Any] = []
+
+    async def handler(request: ModelRequest) -> str:
+        captured.extend(request.messages)
+        return "model response"
+
+    await middleware.awrap_model_call(ModelRequest([call, result]), handler)
+
+    assert observed == []
+    assert captured[1] is result
+    assert accepted == [(result,)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "file_path", "status"),
+    [
+        ("read_file", "/workspace/output.txt", "success"),
+        ("read_file", "/home/agent/.deepagents/result.txt", "success"),
+        ("read_file", "/skills/network/./SKILL.md", "success"),
+        ("read_file", "/skills/network//SKILL.md", "success"),
+        ("read_file", "/skills/network/\\\\outside.txt", "success"),
+        ("read_file", "/skills-other/SKILL.md", "success"),
+        ("read_file", "/skills/../output.txt", "success"),
+        ("read_file", "/skills/network/../../output.txt", "success"),
+        ("read_file", "/skills/", "success"),
+        ("read_file", "skills/network/SKILL.md", "success"),
+        ("read_file", "/skills/network/SKILL.md", "error"),
+        ("execute", "/skills/network/scripts/check.sh", "success"),
+        ("mcp_read_file", "/skills/network/SKILL.md", "success"),
+    ],
+)
+async def test_non_skill_results_still_require_inspection(
+    tool_name: str, file_path: str, status: str
+) -> None:
+    observed: list[tuple[str, str, Any]] = []
+    middleware = ToolResultInspectionMiddleware(
+        lambda tool, kind, content, _id: _record(observed, tool, kind, content)
+    )
+    call = AIMessage(
+        content="",
+        tool_calls=[{"name": tool_name, "args": {"file_path": file_path}, "id": "call-data"}],
+    )
+    result = ToolMessage(
+        content="/skills/network/SKILL.md", name=tool_name, tool_call_id="call-data", status=status
+    )
+    captured: list[Any] = []
+
+    async def handler(request: ModelRequest) -> str:
+        captured.extend(request.messages)
+        return "model response"
+
+    await middleware.awrap_model_call(ModelRequest([call, result]), handler)
+
+    assert observed == [(tool_name, "error" if status == "error" else "result", result.content)]
+    assert captured[1].content.startswith("<tool_data ")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provenance", ["missing", "wrong-id", "wrong-tool", "missing-path", "duplicate", "later"]
+)
+async def test_skill_read_exemption_requires_unambiguous_prior_call(provenance: str) -> None:
+    observed: list[tuple[str, str, Any]] = []
+    middleware = ToolResultInspectionMiddleware(
+        lambda tool, kind, content, _id: _record(observed, tool, kind, content)
+    )
+    call = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "mcp_read_file" if provenance == "wrong-tool" else "read_file",
+                "args": {}
+                if provenance == "missing-path"
+                else {"file_path": "/skills/network/SKILL.md"},
+                "id": "other-id" if provenance == "wrong-id" else "skill-read",
+            }
+        ],
+    )
+    result = ToolMessage(content="skill instructions", name="read_file", tool_call_id="skill-read")
+    messages = {
+        "missing": [result],
+        "wrong-id": [call, result],
+        "wrong-tool": [call, result],
+        "missing-path": [call, result],
+        "duplicate": [call, call, result],
+        "later": [result, call],
+    }[provenance]
+
+    await middleware.awrap_model_call(ModelRequest(messages), _identity_handler)
+
+    assert observed == [("read_file", "result", "skill instructions")]
 
 
 async def _record(

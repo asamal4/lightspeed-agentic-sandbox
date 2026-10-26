@@ -62,9 +62,10 @@ belongs in unit tests.
 - **Skills mounts** — one ConfigMap volume per skill (source at ``/mnt/e2e-skills-src/{basename}``);
   an init container dereferences each skill entry with ``cp -aL`` into an emptyDir at
   ``/app/skills/{basename}`` and skips kubelet ``..data`` and timestamp directories,
-  so ``SKILL.md`` is a regular file (ConfigMap symlinks break OpenAI lazy skill discovery)
-  and DeepAgents does not list those internal directories;
-  writable ``.agents`` under the same emptyDir; ``E2E_OUTPUT_DIR`` for echo-token only.
+  so ``SKILL.md`` is a regular file and DeepAgents does not list those internal directories.
+  The agent container mounts the materialized skills root read-only; only the init
+  container has write access. No legacy ``.agents`` workdir is created.
+  ``E2E_OUTPUT_DIR`` remains writable for echo-token only.
 - **Provider matrix** — `anthropic-vertex-deepagents`, `anthropic-bedrock-deepagents`,
   `gemini-vertex-adk`, `openai-agents`, `azure-openai-agents`; `gemini-vertex-adk` is a legacy matrix ID, but its
   Job config selects the `vertex/google` model route, which now runs through DeepAgents.

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from deepagents.backends import FilesystemBackend
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import PrivateAttr
 
 from lightspeed_agentic.inspection.middleware import TOOL_DATA_TRUST_INSTRUCTION
@@ -71,6 +71,45 @@ async def test_summarization_wraps_model_copy_and_offloads_raw_tool_output(tmp_p
     assert TOOL_DATA_TRUST_INSTRUCTION in summary_prompt
     assert "Preserve `<tool_data>` boundaries" in summary_prompt
     assert '<message type="tool">Approval was skipped.</message>' in summary_prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_summary", [True, False])
+async def test_summarization_keeps_trusted_skill_reads_outside_tool_data(
+    tmp_path: Path, async_summary: bool
+) -> None:
+    model = RecordingFakeChatModel()
+    middleware = create_tool_data_summarization_middleware(
+        model, FilesystemBackend(root_dir=tmp_path)
+    )
+    call = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": "read_file", "args": {"file_path": "/skills/network/SKILL.md"}, "id": "skill"},
+            {
+                "name": "execute",
+                "args": {"command": "bash /skills/network/check.sh"},
+                "id": "shell",
+            },
+        ],
+    )
+    skill = ToolMessage(
+        content="Follow the skill workflow.", name="read_file", tool_call_id="skill"
+    )
+    shell = ToolMessage(content="external output", name="execute", tool_call_id="shell")
+    messages = [HumanMessage(content="Diagnose."), call, skill, shell]
+
+    if async_summary:
+        await middleware._acreate_summary(messages)
+    else:
+        middleware._create_summary(messages)
+
+    prompt = model._received_inputs[0].content
+    assert '<tool_data source="read_file">' not in prompt
+    assert "Follow the skill workflow." in prompt
+    assert '<tool_data source="execute">\nexternal output\n</tool_data>' in prompt
+    assert skill.content == "Follow the skill workflow."
+    assert shell.content == "external output"
 
 
 def test_sync_summarization_sends_wrapped_tool_output_to_model(tmp_path: Path) -> None:

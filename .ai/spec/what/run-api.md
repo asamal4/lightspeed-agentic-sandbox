@@ -60,7 +60,7 @@ The agent returns structured JSON via `run_agent_query()` (formerly HTTP `RunRes
 
 18. **Text fallback.** Non-object JSON or parse failure → `success=true`, `summary` = full result text.
 
-19. **Agent errors.** Provider exceptions → `success=false`, summary prefixed with agent-error label.
+19. **Agent errors.** Provider exceptions → `success=false`, summary prefixed with agent-error label. Exceptions escaping SDK tool handlers are normalized to payload-free `ToolExecutionError`: summary `Agent error: tool execution failed.`, developer diagnostics limited to tool name and original exception class without exception objects or traceback. MCP client-construction and admitted-tool reload exceptions similarly normalize to payload-free `MCPInitializationError`: summary `Agent error: MCP initialization failed.`, with only affected server name(s) and exception class in developer diagnostics. Duplicate admitted MCP tool names normalize to `MCPToolNameCollisionError`: summary `Agent error: MCP tool name collision.`, with only the original/current server names, tool name, and fixed reason `duplicate_tool_name` in diagnostics, without exception objects or traceback. These remain operational failures published through the normal Result/exit-0 path, not `ToolResultSafetyInspectionFailed` termination. Cancellation propagates unchanged. Other provider/internal exceptions retain existing diagnostics.
 
 20. **Empty result.** No non-empty final `result` text → `success=false`, fixed empty-response summary.
 
@@ -131,7 +131,11 @@ status is generic (see `batch_log_contract.py`).
 |----------|-----------------|-------|
 | [test_batch_input.py](../../../tests/test_batch_input.py) | 4–6 | Required/optional `/input` files |
 | [test_batch.py](../../../tests/test_batch.py) | 2, 7, 9, 15, 21–23 | Single family resolution across all hosting/family paths, route/provider/model propagation, required execution-limit parsing, timeout Result publication, and readiness fail-fast (mocked) |
+| [test_batch_safety.py](../../../tests/test_batch_safety.py) | 23a–23b | Actual inspection → DeepAgents → runner → batch failure path for malicious output and exhausted classifier retries; exit 1, safe termination file, no Result publication or sensitive developer-log content (offline scripted models) |
 | [test_run_agent.py](../../../tests/test_run_agent.py) | 8–20 | Agent query, context prefix, timeout classification, and max-turn forwarding |
+| [test_tool_execution_errors.py](../../../tests/test_tool_execution_errors.py) | 19 | Real main/subagent SDK tool failures produce safe operational summaries and logs; real batch/status assembly publishes a payload-free failed Result through a recording Kubernetes client |
+| [test_mcp_initialization_errors.py](../../../tests/test_mcp_initialization_errors.py) | 19 | Admitted MCP setup/reload failures keep remote error bodies and credentials out of developer logs and failed Result status; inspection on/off and cancellation covered |
+| [test_mcp_tool_collisions.py](../../../tests/test_mcp_tool_collisions.py) | 19 | Ambiguous admitted MCP tool names fail with safe operational summaries and logs before model/tool execution; unique tools and filtering of unadmitted reload entries remain intact |
 | [test_ready.py](../../../tests/test_ready.py) | 7 | R1 readiness checks (`health-probes.md`) |
 | [test_publish_results_publish.py](../../../tests/test_publish_results_publish.py) | 21, 24 | K8s create + status replace |
 | [test_publish_results_status.py](../../../tests/test_publish_results_status.py) | 21 | Status assembly from agent output |

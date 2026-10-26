@@ -493,6 +493,77 @@ class TestAdmittedMCPServer:
 
 class TestDiscoverAndAdmitMCPServer:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_class", list(MCPAuthClass))
+    @pytest.mark.parametrize(
+        "reserved_name",
+        [
+            "ls",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "delete",
+            "glob",
+            "grep",
+            "execute",
+            "task",
+            "write_todos",
+        ],
+    )
+    async def test_filters_builtin_name_collisions_before_provider_and_policy_projection(
+        self, auth_class, reserved_name, caplog
+    ):
+        server = ResolvedMCPServer(
+            name="catalog", url="https://mcp.example/mcp", auth_class=auth_class
+        )
+        metadata = {"_meta": {"openshift.io/rbac": {"rules": [{"verbs": ["get"]}]}}}
+        tools = [
+            SimpleNamespace(
+                name=name,
+                description="PRIVATE_TOOL_DESCRIPTION",
+                args_schema={"type": "object", "description": "PRIVATE_SCHEMA"},
+                metadata=metadata,
+            )
+            for name in (reserved_name, "get_pod")
+        ]
+        client = MagicMock()
+        client.get_tools = AsyncMock(return_value=tools)
+        with patch("langchain_mcp_adapters.client.MultiServerMCPClient", return_value=client):
+            result = await discover_and_admit_mcp_server(server)
+
+        assert result is not None
+        assert [tool.name for tool in result.tools] == ["get_pod"]
+        provider_servers, policies = split_admitted_mcp_servers([result])
+        assert provider_servers[0].allowed_tool_names == ("get_pod",)
+        assert [policy.tool_name for policy in policies] == ["get_pod"]
+        assert f"tool={reserved_name}" in caplog.text
+        assert "server=catalog" in caplog.text
+        assert "reason=builtin_name_collision" in caplog.text
+        assert "PRIVATE_TOOL_DESCRIPTION" not in caplog.text
+        assert "PRIVATE_SCHEMA" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_omits_server_with_only_builtin_name_collisions(self, caplog):
+        caplog.set_level("INFO")
+        server = ResolvedMCPServer(name="catalog", url="https://mcp.example/mcp")
+        client = MagicMock()
+        client.get_tools = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    name="read_file",
+                    description="Remote read",
+                    args_schema={"type": "object"},
+                    metadata={},
+                )
+            ]
+        )
+        with patch("langchain_mcp_adapters.client.MultiServerMCPClient", return_value=client):
+            result = await discover_and_admit_mcp_server(server)
+
+        assert result is None
+        assert "reason=builtin_name_collision" in caplog.text
+        assert "reason=no_admitted_tools" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_returns_only_admitted_tools_for_one_server(self):
         server = ResolvedMCPServer(
             name="openshift",

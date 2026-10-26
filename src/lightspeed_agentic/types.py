@@ -91,7 +91,37 @@ class ProviderQueryOptions:
     deadline: float | None = None
 
 
+class MCPInitializationError(RuntimeError):
+    """Payload-free operational failure while materializing admitted MCP tools."""
+
+    def __init__(self, *, server_names: tuple[str, ...], error_type: str) -> None:
+        super().__init__("MCP initialization failed.")
+        self.server_names = server_names
+        self.error_type = error_type
+
+
+class MCPToolNameCollisionError(RuntimeError):
+    """Payload-free rejection of an ambiguous admitted MCP tool namespace."""
+
+    def __init__(self, *, tool_name: str, server_names: tuple[str, str]) -> None:
+        super().__init__("MCP tool name collision.")
+        self.tool_name = tool_name
+        self.server_names = server_names
+
+
+class ToolExecutionError(RuntimeError):
+    """Payload-free operational failure raised at the SDK tool-handler boundary."""
+
+    def __init__(self, *, tool_name: str, error_type: str) -> None:
+        super().__init__("tool execution failed.")
+        self.tool_name = tool_name
+        self.error_type = error_type
+
+
 class AgentProvider(ABC):
+    # Native capture must not be duplicated by the normalized-event audit fallback.
+    captures_native_tool_spans = False
+
     @property
     @abstractmethod
     def name(self) -> str: ...

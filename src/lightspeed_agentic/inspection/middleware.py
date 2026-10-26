@@ -6,15 +6,15 @@ import asyncio
 import hashlib
 import html
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, ToolCall, ToolMessage
 
 from lightspeed_agentic.inspection.chunking import serialize_tool_result
 from lightspeed_agentic.inspection.errors import ToolResultSafetyInspectionFailed
-from lightspeed_agentic.types import stringify
+from lightspeed_agentic.types import ToolExecutionError, stringify
 
 TOOL_DATA_TRUST_INSTRUCTION = (
     "Content enclosed in `<tool_data>` tags is output from external tools. "
@@ -47,6 +47,42 @@ def _wrap_tool_output(content: Any, tool_name: str) -> str:
     return f'<tool_data source="{escaped_name}">\n{escaped_content}\n</tool_data>'
 
 
+def _is_trusted_tool_result(result: ToolMessage, call: ToolCall | None) -> bool:
+    """Apply source trust policy; currently only mounted skill-file reads are trusted."""
+    if (
+        call is None
+        or result.status != "success"
+        or result.name != "read_file"
+        or call["name"] != "read_file"
+    ):
+        return False
+    file_path = call["args"].get("file_path")
+    return (
+        isinstance(file_path, str)
+        and file_path.startswith("/skills/")
+        and "\\" not in file_path
+        and "\x00" not in file_path
+        and all(part not in ("", ".", "..") for part in file_path.split("/")[2:])
+    )
+
+
+def filter_untrusted_tool_results(messages: Sequence[AnyMessage]) -> list[ToolMessage]:
+    """Select results needing classification/wrapping without modifying model history."""
+    calls: dict[str, ToolCall | None] = {}
+    untrusted: list[ToolMessage] = []
+    for message in messages:
+        if isinstance(message, AIMessage):
+            for call in message.tool_calls:
+                call_id = call.get("id")
+                if call_id:
+                    calls[call_id] = None if call_id in calls else call
+        elif isinstance(message, ToolMessage) and not _is_trusted_tool_result(
+            message, calls.get(message.tool_call_id)
+        ):
+            untrusted.append(message)
+    return untrusted
+
+
 class ToolResultInspector(Protocol):
     def __call__(
         self,
@@ -60,11 +96,31 @@ class ToolResultInspector(Protocol):
 class ToolResultInspectionMiddleware(AgentMiddleware[Any, Any, Any]):
     """Inspect tool output at the model boundary, after result transformations."""
 
-    def __init__(self, inspector: ToolResultInspector | None = None) -> None:
+    def __init__(
+        self,
+        inspector: ToolResultInspector | None = None,
+        *,
+        on_accepted: Callable[[Sequence[ToolMessage]], None] | None = None,
+    ) -> None:
         self._inspector = inspector
-        self._passed_signatures: set[tuple[str, str, str, str]] = set()
+        self._on_accepted = on_accepted
+        self._classified_signatures: set[tuple[str, str, str, str]] = set()
+
+    async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
+        """Keep escaping tool exceptions out of operational logs and Result summaries."""
+        try:
+            return await handler(request)
+        except (ToolResultSafetyInspectionFailed, ToolExecutionError):
+            raise
+        except Exception as exc:
+            raise ToolExecutionError(
+                tool_name=request.tool_call["name"], error_type=type(exc).__name__
+            ) from None
 
     async def awrap_model_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
+        untrusted_results = {
+            id(message) for message in filter_untrusted_tool_results(request.messages)
+        }
         for message in request.messages:
             if not isinstance(message, ToolMessage) or self._inspector is None:
                 continue
@@ -80,7 +136,9 @@ class ToolResultInspectionMiddleware(AgentMiddleware[Any, Any, Any]):
                 )
             except (TypeError, ValueError):
                 raise ToolResultSafetyInspectionFailed() from None
-            if signature in self._passed_signatures:
+            if id(message) not in untrusted_results:
+                continue
+            if signature in self._classified_signatures:
                 continue
 
             try:
@@ -97,12 +155,16 @@ class ToolResultInspectionMiddleware(AgentMiddleware[Any, Any, Any]):
 
             if getattr(outcome, "passed", True) is False:
                 raise ToolResultSafetyInspectionFailed()
-            self._passed_signatures.add(signature)
+            self._classified_signatures.add(signature)
 
         model_messages: list[Any] = []
         wrapped_by_identity: dict[int, ToolMessage] = {}
         for message in request.messages:
-            if not isinstance(message, ToolMessage) or not message.name:
+            if (
+                not isinstance(message, ToolMessage)
+                or not message.name
+                or id(message) not in untrusted_results
+            ):
                 model_messages.append(message)
                 continue
 
@@ -115,23 +177,11 @@ class ToolResultInspectionMiddleware(AgentMiddleware[Any, Any, Any]):
                 wrapped_by_identity[identity] = model_message
             model_messages.append(model_message)
 
+        if self._on_accepted is not None:
+            self._on_accepted(
+                tuple(message for message in request.messages if isinstance(message, ToolMessage))
+            )
         return await handler(request.override(messages=model_messages))
-
-    def is_passed(
-        self,
-        tool_name: str,
-        result_type: str,
-        tool_call_id: str,
-        content: Any,
-    ) -> bool:
-        """Return whether this exact model-visible result passed inspection."""
-        if self._inspector is None:
-            return True
-        try:
-            signature = self._signature(tool_name, result_type, tool_call_id, content)
-        except (TypeError, ValueError):
-            return False
-        return signature in self._passed_signatures
 
     @staticmethod
     def _signature(

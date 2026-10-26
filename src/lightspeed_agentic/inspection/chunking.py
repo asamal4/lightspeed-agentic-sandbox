@@ -71,11 +71,10 @@ def chunk_tool_result(
     codec: TokenCodec,
     context_window_tokens: int,
     instruction_tokens: int,
-    output_tokens: int,
 ) -> list[ToolResultChunk]:
     """Serialize and split a complete result with the required overlap."""
     serialized = serialize_tool_result(value)
-    capacity = context_window_tokens - instruction_tokens - output_tokens
+    capacity = context_window_tokens - instruction_tokens
     if capacity <= CHUNK_OVERLAP_TOKENS:
         raise ValueError("classifier context budget must exceed the 256-token overlap")
 

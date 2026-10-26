@@ -16,7 +16,6 @@ import httpx
 import pytest
 
 from lightspeed_agentic import tls
-from lightspeed_agentic.inspection.client import CLASSIFIER_OUTPUT_TOKENS
 
 
 @pytest.fixture(autouse=True)
@@ -402,9 +401,7 @@ async def test_vertex_requests_preserve_api_version_and_explicit_paths(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("hosting", ["direct", "bedrock", "vertex"])
 @pytest.mark.parametrize("stop_reason", ["tool_use", "max_tokens"])
-@pytest.mark.parametrize(
-    "max_output_tokens", [None, CLASSIFIER_OUTPUT_TOKENS], ids=["sdk-default", "classifier-limit"]
-)
+@pytest.mark.parametrize("max_output_tokens", [None, 4096], ids=["sdk-default", "explicit-limit"])
 async def test_classifier_output_budget_reaches_anthropic_http_request(
     monkeypatch: pytest.MonkeyPatch,
     hosting: str,
@@ -682,7 +679,10 @@ async def test_anthropic_classifier_uses_nonstreaming_transport_inside_agent_gra
 
     assert len(classifications) == attempts
     assert all(not body.get("stream") for body in classifications)
-    assert all(body["max_tokens"] == 4096 and "thinking" not in body for body in classifications)
+    assert all(
+        body["max_tokens"] == main[0]["max_tokens"] and "thinking" not in body
+        for body in classifications
+    )
     assert all(body.get("stream") is True for body in main)
     inspections = [
         span for span in span_exporter.get_finished_spans() if span.name == "tool_result.inspection"

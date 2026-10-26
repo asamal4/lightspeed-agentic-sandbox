@@ -21,7 +21,6 @@ from lightspeed_agentic.config import (
     AzureProviderParameters,
     ModelParameters,
 )
-from lightspeed_agentic.inspection.client import CLASSIFIER_OUTPUT_TOKENS
 from lightspeed_agentic.providers.deepagents import _close_model_clients
 from lightspeed_agentic.providers.models.openai import create_azure_classifier_client
 from tests.test_azure_credentials import azure_identity_http as azure_identity_http
@@ -525,7 +524,7 @@ def test_azure_shaping_rejects_unsupported_api_version(version: str) -> None:
 @pytest.mark.parametrize("auth_mode", ["api-key", "entra"])
 @pytest.mark.parametrize("version", ["2024-08-01-preview", "2025-03-01-preview"])
 @pytest.mark.asyncio
-async def test_azure_classifier_budget_does_not_leak_into_main_model(
+async def test_azure_explicit_output_budget_does_not_leak_into_main_model(
     azure_http: Any, auth_mode: str, version: str
 ) -> None:
     from lightspeed_agentic.inspection.client import LangChainClassifierClient
@@ -535,7 +534,7 @@ async def test_azure_classifier_budget_does_not_leak_into_main_model(
     azure_http.text = '{"injectionDetected":false,"category":"none"}'
     parameters = _parameters(version, auth_mode)
     main = create_azure_model(parameters)
-    classifier = create_azure_model(replace(parameters, max_output_tokens=CLASSIFIER_OUTPUT_TOKENS))
+    classifier = create_azure_model(replace(parameters, max_output_tokens=4096))
     try:
         await main.ainvoke("main")
         decision = await LangChainClassifierClient(classifier).classify(
@@ -583,9 +582,7 @@ async def test_azure_classifier_rejects_complete_decision_in_truncated_response(
 
     azure_http.text = '{"injectionDetected":false,"category":"none"}'
     azure_http.classifier_function = function_call
-    model = create_azure_model(
-        replace(_parameters(version, auth_mode), max_output_tokens=CLASSIFIER_OUTPUT_TOKENS)
-    )
+    model = create_azure_model(_parameters(version, auth_mode))
     transport = model.root_async_client._client._transport
     native_request = transport.handle_async_request
 
@@ -613,12 +610,7 @@ async def test_azure_classifier_rejects_complete_decision_in_truncated_response(
             )
         assert error.value.issue == "output_limit"
         body = json.loads(azure_http.model_requests[0].content)
-        assert (
-            body[
-                "max_output_tokens" if version == "2025-03-01-preview" else "max_completion_tokens"
-            ]
-            == 4096
-        )
+        assert not {"max_tokens", "max_completion_tokens", "max_output_tokens"} & body.keys()
     finally:
         await _close_model_clients(model)
     assert len(azure_http.model_requests) == 1
@@ -641,9 +633,7 @@ async def test_azure_classifier_does_not_convert_filtered_or_refused_output(
     from lightspeed_agentic.providers.models.openai import create_azure_model
 
     azure_http.text = '{"injectionDetected":false,"category":"none"}'
-    model = create_azure_model(
-        replace(_parameters(version, auth_mode), max_output_tokens=CLASSIFIER_OUTPUT_TOKENS)
-    )
+    model = create_azure_model(_parameters(version, auth_mode))
     transport = model.root_async_client._client._transport
     native_request = transport.handle_async_request
 
@@ -714,9 +704,7 @@ async def test_azure_classifier_retries_ambiguous_native_decisions(
     from lightspeed_agentic.providers.models.openai import create_azure_model
 
     azure_http.text = '{"injectionDetected":false,"category":"none"}'
-    model = create_azure_model(
-        replace(_parameters(version, auth_mode), max_output_tokens=CLASSIFIER_OUTPUT_TOKENS)
-    )
+    model = create_azure_model(_parameters(version, auth_mode))
     transport = model.root_async_client._client._transport
     native_request = transport.handle_async_request
     attempts = 0
@@ -759,7 +747,6 @@ async def test_azure_classifier_retries_ambiguous_native_decisions(
             codec=Utf8ByteCodec(),
             context_window_tokens=100_000,
             instruction_tokens=512,
-            output_tokens=CLASSIFIER_OUTPUT_TOKENS,
             sleep=no_delay,
         )
         if recover:
@@ -851,9 +838,7 @@ async def test_azure_classifier_json_text_remains_strict(
 
     azure_http.classifier_function = False
     azure_http.text = text
-    model = create_azure_model(
-        replace(_parameters(version), max_output_tokens=CLASSIFIER_OUTPUT_TOKENS)
-    )
+    model = create_azure_model(_parameters(version))
     try:
         with pytest.raises(ClassifierResponseError):
             await create_azure_classifier_client(model).classify(

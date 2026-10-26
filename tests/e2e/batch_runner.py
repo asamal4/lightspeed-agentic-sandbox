@@ -75,7 +75,6 @@ class RunBatchResult:
     pod_logs: str = ""
     termination_message: str | None = None
     error: str | None = None
-    latency_seconds: float = 0.0
     job_name: str = ""
     result_name: str | None = None
     run_uid: str = ""
@@ -173,7 +172,6 @@ def run_batch_query(
     job_env_overrides: Mapping[str, str] | None = None,
 ) -> RunBatchResult:
     """Create input ConfigMap + batch Job, wait for completion, read Result CR."""
-    start = time.monotonic()
     run_uid = secrets.token_hex(16)
     stamp = int(time.time())
     job_name = _sanitize_k8s_name(f"{job_name_prefix or 'e2e'}-{stamp}-{run_uid[:8]}")
@@ -255,7 +253,6 @@ def run_batch_query(
         if cm_created:
             _delete_config_map_ignore_not_found(core_api, config.namespace, input_cm_name)
         result.error = f"create batch resources: {exc.reason}"
-        result.latency_seconds = time.monotonic() - start
         return result
 
     job_ok, wait_err = _wait_for_job(
@@ -273,7 +270,6 @@ def run_batch_query(
 
     if not job_ok:
         result.error = wait_err or "batch job did not succeed"
-        result.latency_seconds = time.monotonic() - start
         return result
 
     kind = result_template["kind"]
@@ -290,13 +286,11 @@ def run_batch_query(
             result.error = f"Result CR {kind}/{result_name} not found after successful Job"
         else:
             result.error = f"read Result CR: {exc.reason}"
-        result.latency_seconds = time.monotonic() - start
         return result
 
     result.body = _body_from_result_cr(result.result_cr)  # pyright: ignore[reportArgumentType]
     if _needs_pod_log_enrichment(result.body):
         result.body = _enrich_body_from_pod_logs(result.body, result.pod_logs)
-    result.latency_seconds = time.monotonic() - start
     return result
 
 

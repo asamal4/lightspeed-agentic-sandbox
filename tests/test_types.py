@@ -80,13 +80,11 @@ def test_query_options_defaults():
     opts = ProviderQueryOptions(
         prompt="test",
         system_prompt="system",
-        model="test-model",
         max_turns=10,
-        allowed_tools=["Bash"],
         cwd="/workspace",
     )
     assert opts.output_schema is None
-    assert opts.stream is False
+    assert opts.tool_output_inspection_enabled is True
 
 
 def test_query_options_accepts_admitted_provider_servers():
@@ -99,9 +97,7 @@ def test_query_options_accepts_admitted_provider_servers():
     opts = ProviderQueryOptions(
         prompt="test",
         system_prompt="system",
-        model="test-model",
         max_turns=10,
-        allowed_tools=["Bash"],
         cwd="/workspace",
         mcp_servers=[server],
     )

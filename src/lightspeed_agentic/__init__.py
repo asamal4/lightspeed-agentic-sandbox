@@ -1,4 +1,3 @@
-from lightspeed_agentic.factory import create_provider
 from lightspeed_agentic.logging import EventLogger
 from lightspeed_agentic.types import (
     AgentProvider,
@@ -23,5 +22,4 @@ __all__ = [
     "ThinkingDeltaEvent",
     "ToolCallEvent",
     "ToolResultEvent",
-    "create_provider",
 ]

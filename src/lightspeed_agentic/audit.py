@@ -50,8 +50,6 @@ class AuditLogger:
         self,
         *,
         phase: str,
-        model: str,
-        provider: str,
         enabled: bool = True,
         capture_content: bool = False,
         agenticrun_uid: str = "",
@@ -64,8 +62,6 @@ class AuditLogger:
         cleared without emitting span events.
         """
         self._agenticrun_phase = phase
-        self._model = model
-        self._provider = provider
         self._enabled = enabled
         self._capture_content = capture_content
         self._capture_tool_spans = capture_tool_spans

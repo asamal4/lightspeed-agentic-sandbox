@@ -305,7 +305,7 @@ async def test_vertex_gemini_deepagent_inspects_file_before_model_delivery(
         return model
 
     monkeypatch.setattr(gemini_models, "create_vertex_gemini_model", create_with_transport)
-    _sdk, route = resolve_model_route(
+    route = resolve_model_route(
         model_family=ResolvedModelFamily(
             name="google",
             expected_envs=(),
@@ -322,10 +322,8 @@ async def test_vertex_gemini_deepagent_inspects_file_before_model_delivery(
             ProviderQueryOptions(
                 prompt=f"Read {sentinel_file} and report its contents.",
                 system_prompt="Report findings from the requested file.",
-                model=route.model,
                 cwd=str(tmp_path),
                 max_turns=10,
-                allowed_tools=["Read"],
                 output_schema=schema,
                 reasoning_config={"thinking_budget": 1024},
                 tool_output_inspection_enabled=True,

@@ -12,7 +12,7 @@ Do not maintain a duplicate path inventory here.
 | `config.resolve_model_family()` | Resolve family, SDK env mapping, and credentials once per batch run |
 | `providers.model_router.resolve_model_route(model_family=...)` | Reuse that family; return an Anthropic, Vertex/Google, native/custom OpenAI, or Azure model route without constructing clients; unsupported Vertex families are rejected earlier by `resolve_model_family()` |
 | `run_readiness_checks(model_family, model_route)` | R1 credential env (+ file paths) and route parameters before LLM (`readiness.py`) |
-| `create_provider(name, model_route=None)` | Factory lazy-imports the selected adapter; DeepAgents requires the resolved model route |
+| `providers.deepagents.DeepAgentsProvider(model_route)` | Construct the shared adapter directly with the resolved model route |
 | `run_agent_query()` | Shared agent execution (`run_agent.py`) |
 | `publish_agent_result()` | Result CR create + status via Kubernetes API |
 | `init_tracer` / `shutdown_tracer` | OTel TracerProvider setup/teardown in `batch.main()` |
@@ -34,14 +34,12 @@ The project uses optional extras to gate provider SDKs:
 
 | Extra | Packages |
 |---|---|
-| `deepagents` | `deepagents`, `jsonschema`, `referencing`, `langchain-anthropic`, `langchain-google-genai`, `langchain-google-vertexai`, `langchain-aws`, `langchain-mcp-adapters` |
-| `gemini` | `google-adk` (declared legacy extra; runtime adapter removed, dependency cleanup deferred) |
-| `openai` | `langchain-openai` (native/custom OpenAI through DeepAgents), `openai-agents` (unused legacy harness dependency; cleanup deferred), `azure-identity`, `aiohttp` |
-| `all` | All three provider extras |
-| `dev` | All providers + test/lint tools |
-| `eval` | Eval-specific test dependencies |
-| `e2e` | BDD test dependencies |
+| `deepagents` | Shared harness, directly imported LangChain/framework and cloud-credential libraries, JSON Schema validation, and Anthropic/Bedrock/Vertex Gemini model integrations |
+| `openai` | Includes `deepagents`, plus `langchain-openai`, the native `openai` SDK, `azure-core`, `azure-identity`, and `aiohttp`; supports native/custom OpenAI and Azure |
+| `all` | Both active provider extras |
+| `dev` | `all` providers + test/lint tools |
+| `e2e` | BDD test dependencies and the existing mock MCP server's MCP/Starlette/Uvicorn libraries |
 
-Runtime dependencies include `kubernetes` (Result CR publishing) and `prometheus-client` (metrics histograms). FastAPI and Uvicorn are **not** runtime dependencies.
+Base dependencies include `kubernetes` (Result CR publishing), `prometheus-client` (metrics), HTTPX (shared TLS/transport), and directly imported OTLP encoding/Protobuf and urllib3 interfaces. The obsolete `gemini` extra and the `google-adk`/`openai-agents` harness dependencies are removed. Vertex Gemini remains in `deepagents`. FastAPI is no longer in the project dependency graph; Starlette and Uvicorn remain transitive MCP dependencies, not a sandbox HTTP server.
 
-The `google-adk` extra remains declared for now but is not used by the Vertex Gemini route; its dependency cleanup is deferred. Provider SDK imports are always lazy (inside methods or guarded by the factory) so the base package imports cleanly without any extras installed.
+Provider SDK imports remain lazy (inside methods or narrow model-construction helpers), so the base package imports without provider extras. Local and Konflux dependency inputs exclude the retired harnesses; generated requirements and Tekton package lists are updated together.

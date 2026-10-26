@@ -1,7 +1,9 @@
 [common]
 python_version = "3.12"
 platforms = ["x86_64", "aarch64"]
-bootstrap_packages = ["maturin", "griffelib", "nh3", "uv", "uv-build"]
+# Google GenAI's build tooling needs nh3 (via twine/readme-renderer) and its
+# maturin build chain. uv installs the prefetched application dependencies.
+bootstrap_packages = ["maturin", "nh3", "uv"]
 extras = ["all"]
 
 [profiles.cpu]

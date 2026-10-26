@@ -238,16 +238,3 @@ class TestAzureOpenAIAgents:
         status = creds.detect_credentials(creds.PROVIDER_AZURE_OPENAI_AGENTS)
         assert not status.available
         assert "AZURE_OPENAI_API_KEY" in status.reason
-
-
-class TestProviderMatrix:
-    def test_all_providers_registered(self) -> None:
-        names = set(creds.PROVIDER_NAMES)
-        assert names == {
-            creds.PROVIDER_ANTHROPIC_VERTEX_DEEPAGENTS,
-            creds.PROVIDER_ANTHROPIC_BEDROCK_DEEPAGENTS,
-            creds.PROVIDER_GEMINI_VERTEX_ADK,
-            creds.PROVIDER_OPENAI_AGENTS,
-            creds.PROVIDER_ANTHROPIC_DEEPAGENTS,
-            creds.PROVIDER_AZURE_OPENAI_AGENTS,
-        }

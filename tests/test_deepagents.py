@@ -31,7 +31,7 @@ from lightspeed_agentic.types import (  # type: ignore[import-untyped]
     ToolResultEvent,
 )
 
-from .helpers import make_model_route
+from .helpers import TEST_WORKFLOW_MAX_TURNS, make_model_route
 
 _TEST_WORKSPACE = "/workspace"
 
@@ -40,9 +40,7 @@ def _base_options(**overrides: Any) -> ProviderQueryOptions:
     defaults = {
         "prompt": "hello",
         "system_prompt": "you are helpful",
-        "model": "claude-sonnet-4-6",
-        "max_turns": 10,
-        "allowed_tools": ["Bash", "Read"],
+        "max_turns": TEST_WORKFLOW_MAX_TURNS,
         "cwd": _TEST_WORKSPACE,
     }
     defaults.update(overrides)
@@ -200,6 +198,39 @@ def _read_file_call(call_id: str, file_path: str) -> dict[str, Any]:
         "id": call_id,
         "type": "tool_call",
     }
+
+
+@pytest.mark.asyncio
+async def test_real_agent_enforces_caller_recursion_limit_without_success_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from langchain_core.messages import AIMessage
+    from langgraph.errors import GraphRecursionError
+
+    source = tmp_path / "budget.txt"
+    source.write_text("Budget fixture.\n")
+    # Completion needs three model calls, regardless of SDK middleware step counts.
+    model, model_inputs = _capturing_fake_chat_model(
+        [
+            AIMessage(content="", tool_calls=[_read_file_call("first", str(source))]),
+            AIMessage(content="", tool_calls=[_read_file_call("second", str(source))]),
+            AIMessage(content="Done."),
+        ]
+    )
+    provider = _real_deepagents_provider(monkeypatch, model)
+    events: list[Any] = []
+
+    async def collect() -> None:
+        async for event in provider.query(
+            _base_options(cwd=str(tmp_path), max_turns=2, tool_output_inspection_enabled=False)
+        ):
+            events.append(event)
+
+    with pytest.raises(GraphRecursionError):
+        await collect()
+
+    assert len(model_inputs) <= 2
+    assert not any(isinstance(event, ResultEvent) for event in events)
 
 
 @pytest.mark.asyncio
@@ -743,7 +774,6 @@ async def test_resolved_route_controls_all_model_roles(
         events = await _collect_events(
             provider,
             _base_options(
-                model="must-not-override-the-route",
                 reasoning_config=reasoning,
                 output_schema=schema,
             ),
@@ -1468,7 +1498,7 @@ class TestEventMapping:
         event_types = [event.type for event in events]
         assert event_types[:6] == ["tool_call"] * 3 + ["tool_result"] * 3
 
-        audit = AuditLogger(phase="execution", model="test-model", provider="deepagents")
+        audit = AuditLogger(phase="execution")
         for event in events:
             audit.process_event(event)
         result_event = next(event for event in events if isinstance(event, ResultEvent))
@@ -1563,7 +1593,7 @@ class TestEventMapping:
         assert len(tool_results) == 1
         assert tool_results[0].call_id == "call-1"
 
-        audit = AuditLogger(phase="execution", model="test-model", provider="deepagents")
+        audit = AuditLogger(phase="execution")
         for event in events:
             audit.process_event(event)
         audit.complete(input_tokens=0, output_tokens=0)
@@ -2223,7 +2253,7 @@ async def test_provider_emits_complete_result_only_after_model_boundary_passes(
     assert tool_result.output == long_output
     from lightspeed_agentic.audit import AuditLogger
 
-    audit = AuditLogger(phase="execution", model="test-model", provider="deepagents")
+    audit = AuditLogger(phase="execution")
     for event in events:
         audit.process_event(event)
     audit.complete(input_tokens=0, output_tokens=0)
@@ -2829,7 +2859,7 @@ async def test_native_source_evidence_is_independent_of_inspection_admission(
             context=None,
             skills_dir=str(tmp_path),
             model="claude-inspection-test",
-            max_turns=20,
+            max_turns=TEST_WORKFLOW_MAX_TURNS,
             timeout_seconds=30,
             tool_output_inspection_enabled=True,
             audit_enabled=True,

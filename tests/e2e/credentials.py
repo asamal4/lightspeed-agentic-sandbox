@@ -459,18 +459,12 @@ _CHECKERS = {
     PROVIDER_AZURE_OPENAI_AGENTS: _check_azure_openai_agents,
 }
 
-PROVIDER_NAMES = list(_CHECKERS.keys())
-
 
 def detect_credentials(provider: str) -> ProviderCredentialStatus:
     checker = _CHECKERS.get(provider)
     if checker is None:
         return ProviderCredentialStatus(provider, False, "none", f"Unknown provider: {provider}")
     return checker()
-
-
-def detect_all() -> dict[str, ProviderCredentialStatus]:
-    return {name: detect_credentials(name) for name in PROVIDER_NAMES}
 
 
 def require_credentials(provider: str) -> None:

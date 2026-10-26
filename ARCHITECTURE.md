@@ -53,14 +53,12 @@ graph TD
     end
 
     subgraph "Provider Abstraction"
-        Factory["factory.py<br/>create_provider()"]
         Types["types.py<br/>AgentProvider ABC<br/>ProviderEvent union"]
         Logger["logging.py<br/>EventLogger"]
     end
 
-    subgraph "Provider Adapters"
+    subgraph "Provider Adapter"
         DeepAgentsP["deepagents.py"]
-        OpenAIP["openai.py"]
     end
 
     subgraph "DeepAgents Model Integrations"
@@ -72,7 +70,7 @@ graph TD
     Batch --> Config
     Batch --> ModelRouter
     Batch --> Readiness
-    Batch --> Factory
+    Batch -->|resolved route| DeepAgentsP
     Batch --> RunAgent
     Batch --> Publish
   Publish --> Status
@@ -81,8 +79,6 @@ graph TD
     RunAgent --> MCP
     RunAgent --> Audit
     RunAgent --> Metrics
-    Factory -->|route-driven| DeepAgentsP
-    Factory -->|legacy OpenAI path| OpenAIP
     ModelRouter -->|ResolvedModelRoute| DeepAgentsP
     DeepAgentsP -->|route constructor| AnthropicModel
     DeepAgentsP -->|route constructor| GeminiModel
@@ -104,7 +100,7 @@ sequenceDiagram
     Op->>Batch: mount /input/*, start pod
     Batch->>Batch: resolve_model_family(), resolve_model_route(model_family=...)
     Batch->>Batch: run_readiness_checks(model_family)
-    Batch->>Batch: create_provider(name, model_route for DeepAgents)
+    Batch->>Batch: DeepAgentsProvider(model_route)
     Batch->>Agent: system prompt, query, schema, context
     Agent->>Provider: query(ProviderQueryOptions)
     Provider->>SDK: SDK-specific invocation
@@ -137,7 +133,7 @@ Each adapter is a thin wrapper. The SDK owns tool execution, skill discovery, an
 Batch resolves the model family once and reuses it for routing and credential
 readiness. Anthropic, Vertex/Google, and native/custom OpenAI return a `ResolvedModelRoute` with
 the selected model, typed constructor parameters, telemetry identity, and
-structured-output method. The factory injects this route into `DeepAgentsProvider`;
+structured-output method. Batch passes this route directly to `DeepAgentsProvider`;
 the provider creates fresh main, inspection-classifier, and output-shaping models
 through it. Only the main model receives query reasoning. Anthropic constructors
 live in `providers/models/anthropic.py`; the Vertex Gemini constructor lives in
@@ -199,7 +195,7 @@ The container runs as non-root user `agent`. `catatonit` is PID 1. The batch mod
 
 - **Thin adapters:** Provider modules map SDK events to a normalized union type; they do not re-implement SDK behavior.
 
-- **Lazy SDK imports:** The factory uses lazy imports so the base package loads without any vendor SDK installed.
+- **Lazy SDK imports:** Provider methods and model-construction helpers import SDKs lazily so the base package and batch entrypoint load without any vendor SDK installed.
 
 - **Kubernetes API for Result CRs:** `publish_results/publish.py` uses the `kubernetes` Python client — not `oc create` / `oc patch`. Inside a pod (`KUBERNETES_SERVICE_HOST` set), authentication MUST use in-cluster config only; if that fails, publish fails and kubeconfig MUST NOT be consulted. Outside a cluster (local dev/tests), kubeconfig MAY be used when in-cluster config is unavailable.
 

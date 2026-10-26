@@ -24,7 +24,7 @@ Each `execute` call starts a fresh shell. Commands that depend on shared shell s
 
 The `/skills/` mapping and its prompt guidance are not path validation or shell confinement. General shell execution remains available, and the model may compose commands. Pod permissions, mounts, and RBAC—not the virtual route—are the security boundary.
 
-The shared `allowed_tools` list is not currently passed to `create_deep_agent()`, so its built-in shell/filesystem tool surface is broader than that list. This decision does not treat the SDK path mapping as a security control.
+The unused legacy `allowed_tools` list has been removed; DeepAgents supplies its native shell/filesystem tool surface without a sandbox-owned built-in-tool allowlist. MCP admission remains separate. This decision does not treat the SDK path mapping as a security control.
 
 ## Verification
 

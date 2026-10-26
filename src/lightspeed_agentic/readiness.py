@@ -15,7 +15,6 @@ from lightspeed_agentic.config import (
     BedrockCredentialSource,
     BedrockProviderParameters,
     ResolvedModelFamily,
-    ResolvedSDK,
     VertexCredentialSource,
     VertexProviderParameters,
 )
@@ -37,19 +36,6 @@ def read_mounted_secret(path: Path) -> str | None:
     except (OSError, UnicodeDecodeError):
         return None
     return content or None
-
-
-def read_first_mounted_secret_in_dir(directory: Path) -> str | None:
-    """Return contents of the first regular file in ``directory`` (sorted by name)."""
-    try:
-        if not directory.is_dir():
-            return None
-        files = sorted((f for f in directory.iterdir() if f.is_file()), key=lambda f: f.name)
-    except OSError:
-        return None
-    if not files:
-        return None
-    return read_mounted_secret(files[0])
 
 
 def check_provider_env(
@@ -152,25 +138,27 @@ def _check_model_route(route: ResolvedModelRoute) -> str:
 
 
 def run_readiness_checks(
-    sdk: ResolvedSDK | ResolvedModelFamily,
+    model_family: ResolvedModelFamily,
     model_route: ResolvedModelRoute | None = None,
 ) -> tuple[bool, dict[str, str]]:
     """Return overall readiness and per-check status strings."""
-    checks = {"provider_env": check_provider_env(sdk.expected_envs, sdk.credential_file_envs)}
-    if isinstance(sdk, ResolvedModelFamily) and sdk.hosting == "azure":
-        checks["provider_configuration"] = _check_azure_configuration(sdk)
-    elif isinstance(sdk, ResolvedModelFamily) and isinstance(
-        sdk.credentials, VertexCredentialSource
-    ):
-        credential_path = sdk.credentials.credentials_file
+    checks = {
+        "provider_env": check_provider_env(
+            model_family.expected_envs, model_family.credential_file_envs
+        )
+    }
+    if model_family.hosting == "azure":
+        checks["provider_configuration"] = _check_azure_configuration(model_family)
+    elif isinstance(model_family.credentials, VertexCredentialSource):
+        credential_path = model_family.credentials.credentials_file
         if not credential_path.is_file() or read_mounted_secret(credential_path) is None:
             checks["provider_credentials"] = (
                 f"error: credential file missing or empty: {credential_path}"
             )
         else:
             checks["provider_credentials"] = "ok"
-    elif isinstance(sdk, ResolvedModelFamily) and sdk.hosting == "bedrock":
-        checks["provider_credentials"] = _check_bedrock_credentials(sdk.credentials)
+    elif model_family.hosting == "bedrock":
+        checks["provider_credentials"] = _check_bedrock_credentials(model_family.credentials)
     if model_route is not None:
         checks["model_route"] = _check_model_route(model_route)
     return all(status == "ok" for status in checks.values()), checks

@@ -38,8 +38,6 @@ DEFAULT_SANDBOX_SA = "lightspeed-sandbox-e2e"
 DEFAULT_OTEL_CA_SECRET = "lightspeed-otel-ca"  # noqa: S105 — K8s Secret name, not a credential
 DEFAULT_OTEL_DEPLOYMENT = "lightspeed-otel-collector"
 DEFAULT_MOCK_MCP_DEPLOYMENT = "lightspeed-mock-mcp"
-DEFAULT_MOCK_MCP_SERVICE = "lightspeed-mock-mcp"
-DEFAULT_MOCK_MCP_PORT = 19090
 E2E_RUN_LABEL = "e2e.openshift.io/session"
 E2E_COMPONENT_LABEL = "agentic.openshift.io/component"
 E2E_COMPONENT_VALUE = "sandbox-e2e"
@@ -198,11 +196,6 @@ def _session_job_env() -> dict[str, str]:
         if raw:
             job_env[key] = raw
     return job_env
-
-
-def mock_mcp_service_url(namespace: str) -> str:
-    """In-cluster MCP URL for the e2e mock server."""
-    return f"http://{DEFAULT_MOCK_MCP_SERVICE}.{namespace}.svc:{DEFAULT_MOCK_MCP_PORT}/mcp"
 
 
 def _provider_extra_env(provider_name: str) -> dict[str, str]:

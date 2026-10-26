@@ -6,39 +6,43 @@ from pathlib import Path
 
 import pytest
 
-from lightspeed_agentic.config import ResolvedModelFamily, ResolvedSDK
+from lightspeed_agentic.config import ResolvedModelFamily
 from lightspeed_agentic.readiness import (
     check_provider_env,
-    read_first_mounted_secret_in_dir,
     read_mounted_secret,
     run_readiness_checks,
 )
 
-_ANTHROPIC_DIRECT = ResolvedSDK(
-    "deepagents",
+_ANTHROPIC_DIRECT = ResolvedModelFamily(
+    "anthropic",
     ("ANTHROPIC_API_KEY",),
+    hosting="anthropic",
 )
 
-_VERTEX_ANTHROPIC = ResolvedSDK(
-    "deepagents",
+_VERTEX_ANTHROPIC = ResolvedModelFamily(
+    "anthropic",
     ("GOOGLE_APPLICATION_CREDENTIALS",),
     ("GOOGLE_APPLICATION_CREDENTIALS",),
+    hosting="vertex",
 )
 
-_VERTEX_GOOGLE = ResolvedSDK(
-    "gemini",
+_VERTEX_GOOGLE = ResolvedModelFamily(
+    "google",
     ("GOOGLE_APPLICATION_CREDENTIALS",),
     ("GOOGLE_APPLICATION_CREDENTIALS",),
+    hosting="vertex",
 )
 
-_OPENAI_DIRECT = ResolvedSDK(
+_OPENAI_DIRECT = ResolvedModelFamily(
     "openai",
     ("OPENAI_API_KEY",),
+    hosting="openai",
 )
 
-_BEDROCK = ResolvedSDK(
-    "deepagents",
+_BEDROCK = ResolvedModelFamily(
+    "anthropic",
     ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+    hosting="bedrock",
 )
 
 
@@ -202,7 +206,7 @@ def test_openai_readiness_validates_resolved_api_key(
         api_key=api_key,
         base_url=base_url,
     )
-    _sdk, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
 
     assert route is not None
     ready, checks = run_readiness_checks(family, route)
@@ -227,7 +231,7 @@ def test_compatible_openai_readiness_requires_resolved_base_url(base_url: str | 
         base_url="https://vllm.example.test/v1",
         api_key="EMPTY",
     )
-    _sdk, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
     assert route is not None
     route = replace(route, model_parameters=replace(route.model_parameters, base_url=base_url))
 
@@ -264,7 +268,7 @@ def test_direct_anthropic_readiness_requires_resolved_api_key(
         model="test-model",
         credentials=source,
     )
-    _sdk, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
 
     assert route is not None
     ready, checks = run_readiness_checks(family, route)
@@ -456,7 +460,7 @@ def test_run_readiness_checks_accepts_default_bedrock_region(
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
     family = resolve_model_family()
-    _, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
 
     assert isinstance(route, ResolvedModelRoute)
     ready, checks = run_readiness_checks(family, route)
@@ -489,7 +493,7 @@ def test_bedrock_readiness_accepts_credentials_from_mounted_files(
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
 
     family = resolve_model_family()
-    _, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
     ready, checks = run_readiness_checks(family, route)
 
     assert ready is True
@@ -512,7 +516,7 @@ def test_bedrock_readiness_rejects_partial_credentials(
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
 
     family = resolve_model_family()
-    _, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
     ready, checks = run_readiness_checks(family, route)
 
     assert ready is False
@@ -537,14 +541,6 @@ def test_read_mounted_secret_empty_returns_none(tmp_path: Path) -> None:
     secret = tmp_path / "empty"
     secret.write_text("", encoding="utf-8")
     assert read_mounted_secret(secret) is None
-
-
-def test_read_first_mounted_secret_in_dir_sorted(tmp_path: Path) -> None:
-    secret_dir = tmp_path / "mount"
-    secret_dir.mkdir()
-    (secret_dir / "b").write_text("second", encoding="utf-8")
-    (secret_dir / "a").write_text("first", encoding="utf-8")
-    assert read_first_mounted_secret_in_dir(secret_dir) == "first"
 
 
 # ── Azure readiness ──
@@ -657,44 +653,3 @@ def test_azure_readiness_accepts_resolved_configuration_without_constructing_cli
 
     assert ready is True
     assert checks == {"provider_env": "ok", "provider_configuration": "ok"}
-
-
-_AZURE_ENTRA = ResolvedSDK(
-    "openai",
-    (),  # no env vars needed — credentials are file-based
-    azure_auth_mode="entra_id",
-    azure_credentials={
-        "client_id": "cid",
-        "tenant_id": "tid",
-        "client_secret": "csec",
-    },
-)
-
-_AZURE_API_KEY = ResolvedSDK(
-    "openai",
-    ("AZURE_OPENAI_API_KEY",),
-    azure_auth_mode="api_key",
-)
-
-
-def test_run_readiness_checks_azure_entra_ok() -> None:
-    """Entra ID mode with empty expected_envs passes readiness."""
-    ok, checks = run_readiness_checks(_AZURE_ENTRA)
-    assert ok is True
-    assert checks["provider_env"] == "ok"
-
-
-def test_run_readiness_checks_azure_api_key_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    """API key mode passes when AZURE_OPENAI_API_KEY is set."""
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "key")
-    ok, checks = run_readiness_checks(_AZURE_API_KEY)
-    assert ok is True
-    assert checks["provider_env"] == "ok"
-
-
-def test_run_readiness_checks_azure_api_key_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """API key mode fails when AZURE_OPENAI_API_KEY is missing."""
-    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
-    ok, checks = run_readiness_checks(_AZURE_API_KEY)
-    assert ok is False
-    assert "error: missing" in checks["provider_env"]

@@ -56,7 +56,7 @@ def resolve_model_route(
     model: str | None = None,
     *,
     model_family: ResolvedModelFamily | None = None,
-) -> tuple[None, ResolvedModelRoute]:
+) -> ResolvedModelRoute:
     """Return a typed route for a supported model family and hosting backend.
 
     Route model precedence is an explicit override, then the resolved family model.
@@ -80,7 +80,7 @@ def resolve_model_route(
                     )
 
                     provider = cast("AzureProviderParameters", model_family.provider)
-                    return None, ResolvedModelRoute(
+                    return ResolvedModelRoute(
                         route="azure",
                         model=effective_model,
                         create_model=create_azure_model,
@@ -109,7 +109,7 @@ def resolve_model_route(
                     )
 
                     is_native = _uses_native_openai_endpoint(model_family)
-                    return None, ResolvedModelRoute(
+                    return ResolvedModelRoute(
                         route="openai" if is_native else "openai-compatible",
                         model=effective_model,
                         create_model=(
@@ -135,7 +135,7 @@ def resolve_model_route(
         case "google":
             from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
 
-            return None, ResolvedModelRoute(
+            return ResolvedModelRoute(
                 route="vertex/google",
                 model=effective_model,
                 create_model=create_vertex_gemini_model,
@@ -160,7 +160,7 @@ def resolve_model_route(
             base_url = model_family.base_url
             match model_family.hosting:
                 case "vertex":
-                    return None, ResolvedModelRoute(
+                    return ResolvedModelRoute(
                         route="vertex/anthropic",
                         model=effective_model,
                         create_model=create_vertex_model,
@@ -174,7 +174,7 @@ def resolve_model_route(
                         structured_output_method="json_schema",
                     )
                 case "bedrock":
-                    return None, ResolvedModelRoute(
+                    return ResolvedModelRoute(
                         route="bedrock/anthropic",
                         model=effective_model,
                         create_model=create_bedrock_model,
@@ -196,7 +196,7 @@ def resolve_model_route(
                         != "api.anthropic.com"
                     ):
                         method = "json_schema"
-                    return None, ResolvedModelRoute(
+                    return ResolvedModelRoute(
                         route="anthropic",
                         model=effective_model,
                         create_model=create_direct_model,

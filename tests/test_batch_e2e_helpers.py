@@ -39,7 +39,7 @@ from tests.e2e.batch_runner import (
     build_result_template,
     run_batch_query,
 )
-from tests.e2e.k8s_helpers import fetch_pod_logs
+from tests.e2e.k8s_helpers import read_pod_logs
 from tests.e2e.otel_verify import fetch_otel_collector_logs
 from tests.e2e.schemas_contract import ECHO_TOKEN_SCHEMA
 from tests.e2e.skills_fixtures import (
@@ -689,9 +689,7 @@ def _read_logs(reader: str, core: CoreV1Api) -> str:
     if reader == "batch":
         return _fetch_job_pod_logs(core, "ns", "offline-job")
     if reader == "pods":
-        return fetch_pod_logs(core, namespace="ns", label_selector="app=test", tail_lines=7)[
-            "pod-a"
-        ]
+        return read_pod_logs(core, namespace="ns", name="pod-a", tail_lines=7)
     return fetch_otel_collector_logs(core, "ns", tail_lines=None)
 
 

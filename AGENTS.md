@@ -3,7 +3,7 @@
 Multi-provider agentic sandbox for OpenShift Lightspeed. This repo runs as a
 one-shot batch process with a DeepAgents harness for Anthropic, Vertex Gemini,
 native or custom OpenAI-compatible endpoints (including vLLM), and Azure OpenAI.
-Vertex/OpenAI is unimplemented pending OLS-4472; the legacy OpenAI adapter is removed.
+Vertex supports only Anthropic and Google models; the legacy OpenAI adapter is removed.
 When editing it, optimize for thin provider wrappers, consistent event mapping,
 and tests that stay offline unless you are intentionally running live cluster BDD.
 
@@ -135,7 +135,7 @@ src/lightspeed_agentic/
 │   └── status.py         # Status assembly (conditions, failureReason)
 ├── providers/
 │   ├── deepagents.py     # Route-driven DeepAgents adapter
-│   ├── model_router.py   # Typed DeepAgents routes; Vertex/OpenAI deferred to OLS-4472
+│   ├── model_router.py   # Typed DeepAgents routes for supported model families
 │   └── models/
 │       ├── anthropic.py  # Explicit direct, Bedrock, and Vertex model constructors
 │       ├── gemini.py     # Vertex Gemini model constructor
@@ -172,7 +172,7 @@ for the route, artifact storage, and execution limits.
   hosting `openai` with no endpoint override or an HTTPS `api.openai.com` hostname.
   Custom/vLLM endpoints use Chat Completions; native OpenAI uses Responses.
   Azure uses the same DeepAgents harness through its native Azure model integration;
-  Vertex/OpenAI is unimplemented pending OLS-4472.
+  Vertex accepts only `anthropic` and `google` model families.
   See configuration rule 3a for endpoint precedence and HTTPS validation.
 - `types.py` event objects are frozen dataclasses. New event types should follow
   the same pattern and stay simple to serialize/log.
@@ -280,7 +280,7 @@ pipeline will prefetch the new versions on the next PR.
 | --- | --- |
 | `LIGHTSPEED_PROVIDER` | Provider type from operator (`anthropic`, `vertex`, `openai`, `azure`, `bedrock`) |
 | `LIGHTSPEED_MODEL` | Model name from operator |
-| `LIGHTSPEED_MODEL_PROVIDER` | Model provider for Vertex (`anthropic`, `google`, `openai`) |
+| `LIGHTSPEED_MODEL_PROVIDER` | Model provider for Vertex (`anthropic`, `google`) |
 | `LIGHTSPEED_PROVIDER_URL` | Optional API endpoint override |
 | `LIGHTSPEED_PROVIDER_PROJECT` | Cloud project ID (Vertex) |
 | `LIGHTSPEED_PROVIDER_REGION` | Cloud region (Vertex, Bedrock) |

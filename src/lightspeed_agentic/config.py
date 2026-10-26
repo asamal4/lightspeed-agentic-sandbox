@@ -231,23 +231,10 @@ def _resolve_vertex(
                     / "GOOGLE_APPLICATION_CREDENTIALS"
                 ),
             )
-        case "openai":
-            return ResolvedModelFamily(
-                "openai",
-                ("GOOGLE_APPLICATION_CREDENTIALS",),
-                ("GOOGLE_APPLICATION_CREDENTIALS",),
-                hosting="vertex",
-                model=_resolved_value(model, "OPENAI_MODEL"),
-                base_url=url or os.environ.get("OPENAI_BASE_URL", "").strip() or None,
-                credentials=VertexCredentialSource(
-                    credentials_file=Path(_llm_credentials_path())
-                    / "GOOGLE_APPLICATION_CREDENTIALS"
-                ),
-            )
         case _:
             raise ValueError(
                 f"Unknown LIGHTSPEED_MODEL_PROVIDER: {model_provider!r}. "
-                "Supported: anthropic, google, openai"
+                "Supported: anthropic, google"
             )
 
 

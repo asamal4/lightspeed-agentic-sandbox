@@ -228,28 +228,29 @@ def test_vertex_llm_credentials_path_override(monkeypatch: pytest.MonkeyPatch) -
     )
 
 
-def test_vertex_openai_resolves_legacy_settings_without_mutating_sdk_environment(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("ambient_settings", [False, True])
+def test_vertex_openai_is_rejected_without_mutating_sdk_environment(
+    monkeypatch: pytest.MonkeyPatch, ambient_settings: bool
 ) -> None:
-    from lightspeed_agentic.config import VertexCredentialSource
-
     _clean_env(monkeypatch)
     monkeypatch.setenv("LIGHTSPEED_PROVIDER", "vertex")
     monkeypatch.setenv("LIGHTSPEED_MODEL_PROVIDER", "openai")
     monkeypatch.setenv("LIGHTSPEED_MODEL", "gpt-4.1")
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_URL", "https://vertex-openai.example.com")
+    if ambient_settings:
+        monkeypatch.setenv("OPENAI_MODEL", "ambient-model")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://ambient.example.com/v1")
+        monkeypatch.setenv("OPENAI_API_KEY", "ambient-key")
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/ambient/credentials.json")
+    environment = dict(os.environ)
 
-    model_family = resolve_model_family()
+    with pytest.raises(
+        ValueError,
+        match=r"Unknown LIGHTSPEED_MODEL_PROVIDER: 'openai'\. Supported: anthropic, google$",
+    ):
+        resolve_model_family()
 
-    assert model_family.name == "openai"
-    assert model_family.model == "gpt-4.1"
-    assert model_family.base_url == "https://vertex-openai.example.com"
-    assert model_family.credentials == VertexCredentialSource(
-        Path("/var/run/secrets/llm-credentials/GOOGLE_APPLICATION_CREDENTIALS")
-    )
-    assert "OPENAI_MODEL" not in os.environ
-    assert "OPENAI_BASE_URL" not in os.environ
-    assert "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ
+    assert dict(os.environ) == environment
 
 
 def test_openai(monkeypatch: pytest.MonkeyPatch) -> None:

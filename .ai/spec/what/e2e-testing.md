@@ -76,8 +76,8 @@ belongs in unit tests.
   and selected route with live evidence; the matrix ID alone does not prove which
   implementation ran.
   Bedrock Jobs MUST use a Bedrock model or inference profile ID (e.g.
-  `global.anthropic.claude-haiku-4-5-20251001-v1:0` from `tests/e2e/config.env` as
-  `ANTHROPIC_BEDROCK_MODEL`); Anthropic API shorthand such as `claude-haiku-4-5` is invalid on Bedrock.
+  `global.anthropic.claude-haiku-5-5` from `tests/e2e/config.env` as
+  `ANTHROPIC_BEDROCK_MODEL`); Anthropic API shorthand such as `claude-haiku-5-5` is invalid on Bedrock.
 - **Azure live acceptance (OLS-4470)** — the existing CI Azure API-key scenario uses the retained `azure-openai-agents` matrix ID, which now selects the shared DeepAgents Azure route, not an OpenAI Agents runner. CI owns the live MCP sentinel, echo-token file/token, flat/nested schema, and applicable reasoning checks through the existing feature suites. Record the image digest, sanitized Azure configuration, tested model/API version, and execution artifacts; skipped or unsupported API cases remain unverified. The separate Entra CI scenario uses the same route. See [CI scenarios](../../../.tekton/integration-tests/integration-test-scenarios/sandbox-integration-test-scenarios.yaml). Offline Azure workflow/request tests are not live acceptance evidence.
 - **Reasoning on every Job** — `e2e-containers.sh` sets provider-specific
   `LIGHTSPEED_REASONING_CONFIG` on all batch Jobs (not only

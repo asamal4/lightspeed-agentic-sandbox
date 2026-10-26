@@ -232,7 +232,8 @@ _configure_batch_job_env() {
             export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"enabled","budget_tokens":1024}}'
             ;;
         anthropic-bedrock-deepagents)
-            export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"enabled","budget_tokens":1024}}'
+            # Haiku 5.5 inference profiles reject thinking.type=enabled; adaptive is required.
+            export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"adaptive"}}'
             ;;
         anthropic-deepagents)
             export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"enabled","budget_tokens":1024}}'

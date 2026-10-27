@@ -128,13 +128,6 @@ def test_route_preserves_model_precedence(
             (),
             (),
         ),
-        (
-            "vertex",
-            "openai",
-            "openai",
-            ("GOOGLE_APPLICATION_CREDENTIALS",),
-            ("GOOGLE_APPLICATION_CREDENTIALS",),
-        ),
         ("openai", None, "openai", ("OPENAI_API_KEY",), ()),
         ("azure", None, "openai", (), ()),
     ],
@@ -183,7 +176,6 @@ def test_model_family_resolution_retains_readiness_configuration(
         ("vertex", "anthropic"),
         ("bedrock", None),
         ("vertex", "google"),
-        ("vertex", "openai"),
         ("openai", None),
         ("azure", None),
     ],
@@ -203,7 +195,7 @@ def test_model_routes_require_a_configured_model(provider: str, family: str | No
 
 @pytest.mark.parametrize("source", ["explicit", "canonical", "legacy"])
 @pytest.mark.parametrize("ambient_settings", [False, True])
-def test_vertex_openai_route_is_unimplemented_without_mutating_environment(
+def test_vertex_openai_route_is_rejected_without_mutating_environment(
     source: str, ambient_settings: bool
 ) -> None:
     from lightspeed_agentic.providers.model_router import resolve_model_route
@@ -229,7 +221,7 @@ def test_vertex_openai_route_is_unimplemented_without_mutating_environment(
         os.environ["OPENAI_MODEL"] = "legacy-model"
     environment = dict(os.environ)
 
-    with pytest.raises(NotImplementedError, match=r"Vertex/OpenAI.*OLS-4472"):
+    with pytest.raises(ValueError, match="Unknown LIGHTSPEED_MODEL_PROVIDER: 'openai'"):
         resolve_model_route("explicit-model" if source == "explicit" else None)
 
     assert dict(os.environ) == environment

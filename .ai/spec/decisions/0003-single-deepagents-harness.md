@@ -45,9 +45,15 @@ parallel telemetry pipeline. Exact integration versions/classes must satisfy the
 behavioral contract and be verified during implementation; this decision does
 not assert untested library support.
 
-Preserve direct Anthropic, Vertex Anthropic/Google/OpenAI, Bedrock Anthropic,
+Preserve direct Anthropic, Vertex Anthropic/Google, Bedrock Anthropic,
 native OpenAI, Azure OpenAI, and OpenAI-compatible/vLLM routes. Native credential
 objects continue to own short-lived-token minting/refresh and retries.
+
+The original Vertex/OpenAI migration requirement is superseded by the decision
+not to implement that integration. Sandbox configuration accepts only Anthropic
+and Google for Vertex; `openai` is rejected during family resolution. Native
+OpenAI, Azure OpenAI, and custom OpenAI-compatible endpoints remain supported.
+Removal of the operator's Vertex/OpenAI CRD choice is separate follow-up work.
 
 ### DeepAgents tools and safety for every model
 

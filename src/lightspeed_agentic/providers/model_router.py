@@ -57,7 +57,7 @@ def resolve_model_route(
     *,
     model_family: ResolvedModelFamily | None = None,
 ) -> tuple[None, ResolvedModelRoute]:
-    """Return a typed route; Vertex/OpenAI is deferred to OLS-4472.
+    """Return a typed route for a supported model family and hosting backend.
 
     Route model precedence is an explicit override, then the resolved family model.
     Every model family must resolve a model; model clients remain unconstructed and
@@ -99,7 +99,7 @@ def resolve_model_route(
                         bind_structured_output=bind_azure_output,
                         create_classifier_client=create_azure_classifier_client,
                     )
-                case "openai":
+                case _:
                     from lightspeed_agentic.providers.models.openai import (
                         bind_openai_compatible_output,
                         create_native_openai_model,
@@ -132,8 +132,6 @@ def resolve_model_route(
                         ),
                         bind_structured_output=None if is_native else bind_openai_compatible_output,
                     )
-                case _:
-                    raise NotImplementedError("Vertex/OpenAI is not implemented (OLS-4472)")
         case "google":
             from lightspeed_agentic.providers.models.gemini import create_vertex_gemini_model
 

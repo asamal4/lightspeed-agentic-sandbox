@@ -481,7 +481,7 @@ class TestBatchMain:
             patch("lightspeed_agentic.batch.configure_tls"),
             patch(
                 "lightspeed_agentic.batch.run_readiness_checks",
-                side_effect=AssertionError("unimplemented route must not reach readiness"),
+                side_effect=AssertionError("unsupported configuration must not reach readiness"),
             ),
             patch(
                 "lightspeed_agentic.batch.discover_and_admit_mcp_servers",
@@ -496,7 +496,9 @@ class TestBatchMain:
         ):
             main()
 
-        write_log.assert_called_once_with("Vertex/OpenAI is not implemented (OLS-4472)")
+        write_log.assert_called_once_with(
+            "Unknown LIGHTSPEED_MODEL_PROVIDER: 'openai'. Supported: anthropic, google"
+        )
         exit_mock.assert_called_once_with(1)
 
     def test_azure_configuration_fails_readiness_before_discovery_or_provider_creation(

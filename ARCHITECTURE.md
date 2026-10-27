@@ -151,7 +151,8 @@ precedence and normalization are defined in
 `ChatOpenAI(use_responses_api=False)` through the `openai-compatible` route, with
 raw schema mode and a non-strict schema wrapper. Azure uses the shared DeepAgents
 harness with native Azure clients, API-key or Entra ID auth, and version-aware
-Chat Completions/Responses schema handling. Vertex/OpenAI is unimplemented pending OLS-4472; the legacy adapter and dispatch are removed. The overall single-harness migration
+Chat Completions/Responses schema handling. Vertex supports only Anthropic and
+Google models; the legacy OpenAI adapter and dispatch are removed. The overall single-harness migration
 remains partially implemented; live parity and telemetry compatibility review are
 still required.
 
@@ -194,7 +195,7 @@ The container runs as non-root user `agent`. `catatonit` is PID 1. The batch mod
 
 ## Key Decisions
 
-- **One provider per pod:** Selected at startup through `config.resolve_model_family()` and `providers.model_router.resolve_model_route()`. Anthropic, Vertex/Google, native/custom OpenAI, and Azure receive an explicit DeepAgents model route; Vertex/OpenAI is unimplemented pending OLS-4472.
+- **One provider per pod:** Selected at startup through `config.resolve_model_family()` and `providers.model_router.resolve_model_route()`. Anthropic, Vertex/Google, native/custom OpenAI, and Azure receive an explicit DeepAgents model route. Vertex accepts only Anthropic and Google model families; other values fail configuration resolution.
 
 - **Thin adapters:** Provider modules map SDK events to a normalized union type; they do not re-implement SDK behavior.
 

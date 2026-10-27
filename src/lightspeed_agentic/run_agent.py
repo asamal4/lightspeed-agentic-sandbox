@@ -24,7 +24,13 @@ from lightspeed_agentic.tracing import (
     parse_traceparent,
     set_json_span_attribute,
 )
-from lightspeed_agentic.types import AgentProvider, ProviderQueryOptions
+from lightspeed_agentic.types import (
+    AgentProvider,
+    MCPInitializationError,
+    MCPToolNameCollisionError,
+    ProviderQueryOptions,
+    ToolExecutionError,
+)
 
 logger = logging.getLogger("lightspeed_agentic")
 
@@ -181,6 +187,7 @@ async def run_agent_query(
         enabled=audit_enabled,
         capture_content=capture_content,
         agenticrun_uid=agenticrun_uid,
+        capture_tool_spans=not provider.captures_native_tool_spans,
     )
 
     logger.info(
@@ -332,6 +339,27 @@ async def run_agent_query(
             output_tokens=0,
             span=agent_span,
         )
+        if isinstance(exc, ToolExecutionError):
+            logger.error(
+                "[agent] tool execution failed tool=%s error_type=%s",
+                exc.tool_name,
+                exc.error_type,
+            )
+            return AgentResult(output={"success": False, "summary": f"Agent error: {exc}"})
+        if isinstance(exc, MCPInitializationError):
+            logger.error(
+                "[agent] MCP initialization failed servers=%s error_type=%s",
+                ",".join(exc.server_names),
+                exc.error_type,
+            )
+            return AgentResult(output={"success": False, "summary": f"Agent error: {exc}"})
+        if isinstance(exc, MCPToolNameCollisionError):
+            logger.error(
+                "[agent] MCP tool name collision servers=%s tool=%s reason=duplicate_tool_name",
+                ",".join(exc.server_names),
+                exc.tool_name,
+            )
+            return AgentResult(output={"success": False, "summary": f"Agent error: {exc}"})
         logger.exception("[agent] query error")
         return AgentResult(
             output={"success": False, "summary": f"Agent error: {exc}"},

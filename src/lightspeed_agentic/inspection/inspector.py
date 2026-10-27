@@ -130,7 +130,6 @@ async def inspect_tool_result(
     tool_call_id: str | None = None,
     context_window_tokens: int,
     instruction_tokens: int,
-    output_tokens: int,
     enabled: bool = True,
     deadline: float | None = None,
     monotonic: Callable[[], float] = time.monotonic,
@@ -151,7 +150,6 @@ async def inspect_tool_result(
         codec=codec,
         context_window_tokens=context_window_tokens,
         instruction_tokens=instruction_tokens,
-        output_tokens=output_tokens,
     )
     if tracer is None:
         from lightspeed_agentic.tracing import get_tracer
@@ -165,7 +163,6 @@ async def inspect_tool_result(
             "inspection.chunk_count": chunk.chunk_count,
             "inspection.chunk_index": chunk.chunk_index,
             "inspection.enabled": True,
-            "inspection.output_token_limit": output_tokens,
             "tool.name": tool_name,
         }
         if provider:

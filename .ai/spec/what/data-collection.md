@@ -14,7 +14,7 @@ The change from Vertex Gemini `generate_content` spans/ADK parts to DeepAgents `
 
 1. When the existing trace runtime records spans, canonical profile content is stored in span attributes. Do not add a custom transcript attribute/event or skill events, and do not infer skill use from text or generic tool output.
 2. Full profile attributes are recorded on applicable recording spans independently of audit/content flags. Existing runtime and exporter activation remain as defined in `run-api.md` and `audit-logging.md`; this profile does not activate a previously disabled trace path or change developer logs, templog, or legacy choice events.
-3. Preserve existing safety inspection, execution limits, and prior result redaction. Capture only values exposed by the existing normalized execution path; do not recover pre-redaction output or bypass inspection.
+3. Preserve safety inspection and execution limits. Native tool callbacks retain their observed successful raw results independently of normalized event admission; later inspection rejection or classifier failure MUST NOT erase completed source evidence. Rejected results and pending siblings MUST NOT reach normalized result events or later model context. Native execution failures omit the successful result. This source evidence is untrusted and is not permission to bypass inspection.
 4. Export only through the existing OTLP trace runtime. FileExporter, rotation/retention, upload, and Dataverse behavior are downstream and outside the sandbox runtime. Delivery is best-effort; FileExporter may reject an over-limit batch. The producer adds no truncation to fit that limit and does not write product-data files or read collection state.
 
 ## Invocation and Tool Spans
@@ -34,7 +34,8 @@ Structured message and tool values use compact JSON strings with `ensure_ascii=F
 
 ### Tool Spans
 
-- Each local tool execution uses an `execute_tool {name}` `SpanKind.INTERNAL` child span with `gen_ai.operation.name="execute_tool"` and `gen_ai.tool.name`.
+- Each local tool execution uses an `execute_tool {name}` `SpanKind.INTERNAL` child span with `gen_ai.operation.name="execute_tool"` and `gen_ai.tool.name`. DeepAgents' per-query LangChain callback owns this lifecycle; normalized provider events MUST NOT create a second span. The callback retains actual route provider identity and available invocation run correlation.
+- Successful native callbacks retain the raw result and remain `UNSET`, even if inspection later rejects it. Native exceptions or explicit error-status results close ERROR without a result attribute; interruption closes only still-open tool spans. For SDK `Command` results, capture only an unambiguous result message matching the actual tool-call ID, not unrelated state updates.
 - Set `gen_ai.tool.call.id` only from an actual SDK call ID; never publish a fabricated ID. Set `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` only when their respective values were observed.
 - Normalize string payloads with strict JSON parsing: accept standards-compliant finite JSON only; treat `NaN`, `Infinity`, `-Infinity`, exponent overflow, and parser/encoder-limit failures as non-JSON. Pass decoded dictionaries through unchanged and wrap other successfully decoded values as `{"content": value}`.
 - On any parse, encode, or limit rejection, preserve the complete original raw string in `{"content": raw_string}`. This is sandbox normalization, not a provider-native field; do not truncate it or raise a telemetry-only error into the provider path. Preserve observed empty values; absent arguments/results remain absent.
@@ -73,7 +74,7 @@ The stdout and OTLP trace exporters MUST exclude spans whose instrumentation-sco
 
 Canonical parenting is independent of spans under that vendor scope: `invoke_agent` is a child of the received operator context, and each accepted provider-generation and local `execute_tool` span is a direct child of `invoke_agent`. Exporter filtering cannot orphan or reparent them.
 
-The exclusion MUST NOT affect span-event-to-log processing or stdlib `LoggingHandler`; existing log correlation, event payloads, and gates remain unchanged.
+The exclusion MUST NOT affect span-event-to-log processing or stdlib `LoggingHandler`; existing log correlation, event payloads, and gates remain unchanged. Independently, the stdout compliance exporter removes the six standard content attributes when `LIGHTSPEED_CAPTURE_CONTENT=false`, from its encoded copy only. Source spans and OTLP trace exports retain their original content; see `audit-logging.md` rule 9.
 
 ## Reconstruction and Ordering
 

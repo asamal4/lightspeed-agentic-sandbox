@@ -50,7 +50,6 @@ def test_chunking_preserves_complete_serialized_result() -> None:
         codec=CharacterCodec(),
         context_window_tokens=300,
         instruction_tokens=20,
-        output_tokens=20,
     )
 
     assert "".join(chunk.content for chunk in chunks) == serialized
@@ -65,7 +64,6 @@ def test_adjacent_chunks_overlap_by_256_tokens() -> None:
         codec=CharacterCodec(),
         context_window_tokens=640,
         instruction_tokens=20,
-        output_tokens=20,
     )
 
     assert len(chunks) == 3
@@ -87,9 +85,8 @@ def test_utf8_byte_codec_chunks_keep_code_points_and_complete_coverage(
     chunks = chunk_tool_result(
         value,
         codec=Utf8ByteCodec(),
-        context_window_tokens=640,
+        context_window_tokens=620,
         instruction_tokens=20,
-        output_tokens=20,
     )
 
     chunk_texts = [chunk.content for chunk in chunks]
@@ -109,6 +106,20 @@ def test_utf8_byte_codec_chunks_keep_code_points_and_complete_coverage(
     assert reconstructed == value
 
 
+def test_chunking_uses_context_after_instructions_without_output_reservation() -> None:
+    value = "x" * 7680
+
+    chunks = chunk_tool_result(
+        value,
+        codec=Utf8ByteCodec(),
+        context_window_tokens=8192,
+        instruction_tokens=512,
+    )
+
+    assert [chunk.content for chunk in chunks] == [value]
+    assert chunks[0].chunk_count == 1
+
+
 def test_small_result_uses_one_chunk_without_truncation() -> None:
     value = "short result"
 
@@ -117,19 +128,17 @@ def test_small_result_uses_one_chunk_without_truncation() -> None:
         codec=CharacterCodec(),
         context_window_tokens=1000,
         instruction_tokens=10,
-        output_tokens=10,
     )
 
     assert [chunk.content for chunk in chunks] == [value]
     assert chunks[0].chunk_count == 1
 
 
-def test_chunking_rejects_insufficient_reserved_budget() -> None:
+def test_chunking_rejects_insufficient_context_after_instructions() -> None:
     with pytest.raises(ValueError, match="overlap"):
         chunk_tool_result(
             "value",
             codec=CharacterCodec(),
             context_window_tokens=256,
             instruction_tokens=0,
-            output_tokens=0,
         )

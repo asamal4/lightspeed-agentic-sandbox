@@ -37,6 +37,8 @@ The middleware applies SAFE-02 to external success and error results immediately
 The interception includes built-in tools, MCP tools, offload previews/references, and later artifact read/search results.
 The stored artifact remains unchanged.
 
+Successful native file reads from the operator-mounted, read-only `/skills/` route are trusted instruction/asset sources, not external tool output. They bypass classification and wrapping when matched to an unambiguous preceding `read_file` call with a canonical skills path. This exception also applies to summary-model copies. Skill-script execution output, errors, MCP output, artifact reads, and reads without matching provenance retain the boundary. See SAFE-01 rule 5a in [provider-contract.md](../what/provider-contract.md).
+
 The automatic summary model runs outside this middleware.
 The custom summarization middleware wraps copies of historical tool results before it sends them to that model.
 It adds the trust instruction to the summary prompt and tells the model to preserve tool-data tags in its summary.

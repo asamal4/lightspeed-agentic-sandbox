@@ -79,11 +79,35 @@ def otel_runtime_enabled() -> bool:
     return audit or bool(endpoint)
 
 
+_CONTENT_ATTRIBUTES = frozenset(
+    {
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
+        "gen_ai.system_instructions",
+        "gen_ai.tool.definitions",
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool.call.result",
+    }
+)
+
+
 class OTLPJsonStdoutExporter(SpanExporter):
-    """Exports spans as OTLP JSON wire format to stdout (one line per batch)."""
+    """Export a compliance copy without mutating source spans or OTLP trace export."""
+
+    def __init__(self, *, capture_content: bool = True) -> None:
+        self._capture_content = capture_content
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         pb = encode_spans(spans)
+        if not self._capture_content:
+            for resource in pb.resource_spans:
+                for scope in resource.scope_spans:
+                    for span in scope.spans:
+                        attributes = [
+                            attr for attr in span.attributes if attr.key not in _CONTENT_ATTRIBUTES
+                        ]
+                        del span.attributes[:]
+                        span.attributes.extend(attributes)
         line = json.dumps(MessageToDict(pb, preserving_proto_field_name=True))
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
@@ -277,7 +301,16 @@ def init_tracer(
     _state.tracer_provider = TracerProvider(resource=resource)
     if audit:
         _state.tracer_provider.add_span_processor(
-            SimpleSpanProcessor(_AdkSpanFilteringExporter(OTLPJsonStdoutExporter()))
+            SimpleSpanProcessor(
+                _AdkSpanFilteringExporter(
+                    OTLPJsonStdoutExporter(
+                        capture_content=(
+                            os.environ.get("LIGHTSPEED_CAPTURE_CONTENT", "").strip().lower()
+                            != "false"
+                        )
+                    )
+                )
+            )
         )
     if endpoint and audit:
         # Same gate as stdout audit: only forward when audit is enabled.

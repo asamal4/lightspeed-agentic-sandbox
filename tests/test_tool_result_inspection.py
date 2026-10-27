@@ -55,7 +55,6 @@ async def test_inspects_all_chunks_in_source_order() -> None:
         codec=CharacterCodec(),
         context_window_tokens=640,
         instruction_tokens=20,
-        output_tokens=20,
         sleep=no_sleep,
     )
 
@@ -82,7 +81,6 @@ async def test_malicious_first_chunk_stops_before_later_chunks() -> None:
         codec=CharacterCodec(),
         context_window_tokens=640,
         instruction_tokens=20,
-        output_tokens=20,
         sleep=no_sleep,
     )
 
@@ -106,7 +104,6 @@ async def test_malicious_middle_or_last_chunk_stops_at_that_chunk(malicious_inde
         codec=CharacterCodec(),
         context_window_tokens=640,
         instruction_tokens=20,
-        output_tokens=20,
         sleep=no_sleep,
     )
 
@@ -132,7 +129,6 @@ async def test_classifier_failures_retry_three_total_attempts_with_exact_delays(
             codec=CharacterCodec(),
             context_window_tokens=640,
             instruction_tokens=20,
-            output_tokens=20,
             sleep=record_sleep,
         )
 
@@ -169,7 +165,6 @@ async def test_malformed_classifier_reply_fails_closed_as_invalid_response() -> 
             codec=CharacterCodec(),
             context_window_tokens=640,
             instruction_tokens=20,
-            output_tokens=20,
             sleep=no_sleep,
         )
 
@@ -199,7 +194,6 @@ async def test_provider_error_metadata_is_safe_and_preserved() -> None:
             codec=CharacterCodec(),
             context_window_tokens=640,
             instruction_tokens=20,
-            output_tokens=20,
             sleep=no_sleep,
         )
 
@@ -230,7 +224,6 @@ async def test_invalid_classifier_response_is_retried() -> None:
         codec=CharacterCodec(),
         context_window_tokens=640,
         instruction_tokens=20,
-        output_tokens=20,
         sleep=record_sleep,
     )
 
@@ -251,7 +244,6 @@ async def test_disabled_inspection_makes_no_classifier_call() -> None:
         codec=CharacterCodec(),
         context_window_tokens=640,
         instruction_tokens=20,
-        output_tokens=20,
         enabled=False,
         sleep=no_sleep,
     )
@@ -279,7 +271,6 @@ async def test_deadline_prevents_retry_sleep_and_fails_closed() -> None:
             codec=CharacterCodec(),
             context_window_tokens=640,
             instruction_tokens=20,
-            output_tokens=20,
             deadline=10.2,
             monotonic=lambda: next(clock),
             sleep=record_sleep,

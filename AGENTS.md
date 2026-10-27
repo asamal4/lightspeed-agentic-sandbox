@@ -148,7 +148,7 @@ src/lightspeed_agentic/
 | Tools | `LocalShellBackend` + `/skills/` `FilesystemBackend` route + MCP tools |
 | Skills | `/skills/` virtual route passed to `create_deep_agent()` when skills exist |
 | Structured output | Tool-free second pass without reasoning; native OpenAI uses strict JSON schema, compatible endpoints preserve the supplied schema |
-| Streaming | `astream(stream_mode="messages")` |
+| Streaming | `astream(stream_mode=["messages", "custom"])`; custom records carry one-shot inspection acceptance |
 
 Keep provider adapters thin. The SDK should own tool execution and skill
 discovery; `tools.py` holds the shared allowlist constant only. The SKILL.md

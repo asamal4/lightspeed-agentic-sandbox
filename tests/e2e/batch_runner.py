@@ -36,7 +36,6 @@ from tests.e2e.skills_fixtures import (
     E2E_POD_OUTPUT_DIR,
     E2E_POD_SKILLS_DIR,
     E2E_POD_SKILLS_SRC_DIR,
-    E2E_POD_SKILLS_WORKDIR,
     SKILLS_SOURCE,
     configmap_items_for_skill,
     ensure_skill_configmaps,
@@ -510,7 +509,9 @@ def _build_job_spec(
     init_volume_mounts: list[dict[str, Any]] = []
     if skill_configmaps:
         volumes.append({"name": "skills-root", "emptyDir": {}})
-        volume_mounts.append({"name": "skills-root", "mountPath": E2E_POD_SKILLS_DIR})
+        volume_mounts.append(
+            {"name": "skills-root", "mountPath": E2E_POD_SKILLS_DIR, "readOnly": True}
+        )
         for skill_name, cm_name in skill_configmaps.items():
             vol_name = _sanitize_k8s_name(f"skill-{skill_name}")
             volumes.append(

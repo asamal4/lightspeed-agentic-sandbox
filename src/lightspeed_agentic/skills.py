@@ -8,9 +8,9 @@ import os
 def has_skills(cwd: str) -> bool:
     """Return True when at least one subdirectory of *cwd* contains a SKILL.md.
 
-    Matches host discovery used by DeepAgents SkillsMiddleware and OpenAI
-    LocalDirLazySkillSource: immediate children of the skills root only.
-    ``cwd/.agents`` (operator emptyDir) does not count unless it has SKILL.md.
+    Matches host discovery used by DeepAgents SkillsMiddleware:
+    immediate children of the skills root only. Empty subdirectories
+    do not count as skills.
     """
     try:
         for entry in os.listdir(cwd):

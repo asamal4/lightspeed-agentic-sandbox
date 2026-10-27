@@ -280,7 +280,7 @@ async def test_azure_route_runs_native_skill_shell_mcp_inspection_and_shaping(
         tools = {tool.get("function", tool)["name"] for tool in body.get("tools", [])}
         messages = body["input"] if responses else body["messages"]
         if tools == {"ClassifierDecision"}:
-            assert body["max_output_tokens" if responses else "max_completion_tokens"] == 4096
+            assert not {"max_tokens", "max_completion_tokens", "max_output_tokens"} & body.keys()
             assert not {"reasoning", "reasoning_effort", "verbosity"} & body.keys()
             assert "verbosity" not in body.get("text", {})
             content = next(
@@ -357,16 +357,26 @@ async def test_azure_route_runs_native_skill_shell_mcp_inspection_and_shaping(
         assert "delete_sentinel" not in tools
         if responses:
             assert body["reasoning"] == {"effort": "low"}
-            outputs = [
-                item["output"] for item in messages if item.get("type") == "function_call_output"
-            ]
+            tool_outputs = {
+                item["call_id"]: item["output"]
+                for item in messages
+                if item.get("type") == "function_call_output"
+            }
         else:
             assert body["reasoning_effort"] == "low"
-            outputs = [item["content"] for item in messages if item.get("role") == "tool"]
-        assert all(
-            value.startswith("<tool_data source=") and value.endswith("\n</tool_data>")
-            for value in outputs
-        )
+            tool_outputs = {
+                item["tool_call_id"]: item["content"]
+                for item in messages
+                if item.get("role") == "tool"
+            }
+        outputs = list(tool_outputs.values())
+        for call_id, value in tool_outputs.items():
+            if call_id == "call_skill":
+                assert "Skill instruction sentinel" in value
+                assert "<tool_data" not in value
+            else:
+                assert value.startswith("<tool_data source=")
+                assert value.endswith("\n</tool_data>")
         if len(main) == 1:
             assert "/skills/azure-workflow/SKILL.md" in json.dumps(messages)
             return reply(
@@ -415,20 +425,21 @@ async def test_azure_route_runs_native_skill_shell_mcp_inspection_and_shaping(
     if malicious:
         with pytest.raises(ToolResultSafetyInspectionFailed):
             await collect()
-        assert len(main) == len(classifications) == 1
-        assert not output.exists()
+        assert (len(main), len(classifications)) == (2, 1)
+        assert classifications[0]["toolName"] == "execute"
+        assert output.read_text() == "azure-shell-sentinel\n"
         assert not shaping
         assert not mcp_calls
-        assert not any(isinstance(event, (ToolResultEvent, ResultEvent)) for event in events)
+        # The trusted skill read was delivered before the script result was rejected.
+        assert [event.call_id for event in events if isinstance(event, ToolResultEvent)] == [
+            "call_skill"
+        ]
+        assert not any(isinstance(event, ResultEvent) for event in events)
     else:
         await collect()
         assert output.read_text() == "azure-shell-sentinel\n"
-        assert (len(main), len(classifications), len(shaping)) == (4, 3, 1)
-        assert [item["toolName"] for item in classifications] == [
-            "read_file",
-            "execute",
-            "read_sentinel",
-        ]
+        assert (len(main), len(classifications), len(shaping)) == (4, 2, 1)
+        assert [item["toolName"] for item in classifications] == ["execute", "read_sentinel"]
         assert mcp_calls == ["read_sentinel"]
         assert [event.name for event in events if isinstance(event, ToolCallEvent)] == [
             "read_file",
@@ -466,7 +477,7 @@ async def test_azure_route_runs_native_skill_shell_mcp_inspection_and_shaping(
         span for span in span_exporter.get_finished_spans() if span.name == "tool_result.inspection"
     ]
     assert [span.attributes["inspection.outcome"] for span in inspections] == (
-        ["malicious"] if malicious else ["benign"] * 3
+        ["malicious"] if malicious else ["benign"] * 2
     )
     if filter_error:
         assert inspections[0].attributes["inspection.category"] == "unknown"
@@ -509,15 +520,12 @@ async def test_azure_classifier_other_provider_errors_remain_retryable_failures(
     code: str | None,
 ) -> None:
     from lightspeed_agentic.inspection.chunking import Utf8ByteCodec
-    from lightspeed_agentic.inspection.client import CLASSIFIER_OUTPUT_TOKENS
     from lightspeed_agentic.inspection.errors import InspectionError
     from lightspeed_agentic.inspection.inspector import inspect_tool_result
     from lightspeed_agentic.providers.deepagents import _close_model_clients
 
     route = _route(monkeypatch, tmp_path, version, auth_mode)
-    model = route.create_model(
-        replace(route.model_parameters, max_output_tokens=CLASSIFIER_OUTPUT_TOKENS), None
-    )
+    model = route.create_model(route.model_parameters, None)
     model.disable_streaming = True
     delays: list[float] = []
 
@@ -552,7 +560,6 @@ async def test_azure_classifier_other_provider_errors_remain_retryable_failures(
                 codec=Utf8ByteCodec(),
                 context_window_tokens=100_000,
                 instruction_tokens=512,
-                output_tokens=CLASSIFIER_OUTPUT_TOKENS,
                 sleep=no_delay,
             )
         assert error.value.failure_type == "provider_error"
@@ -625,10 +632,7 @@ async def test_non_azure_classifier_does_not_convert_content_filter_errors(
     endpoint: str,
 ) -> None:
     from lightspeed_agentic.inspection.chunking import Utf8ByteCodec
-    from lightspeed_agentic.inspection.client import (
-        CLASSIFIER_OUTPUT_TOKENS,
-        LangChainClassifierClient,
-    )
+    from lightspeed_agentic.inspection.client import LangChainClassifierClient
     from lightspeed_agentic.inspection.errors import InspectionError
     from lightspeed_agentic.inspection.inspector import inspect_tool_result
     from lightspeed_agentic.providers.deepagents import _close_model_clients
@@ -639,9 +643,7 @@ async def test_non_azure_classifier_does_not_convert_content_filter_errors(
     monkeypatch.setenv("OPENAI_API_KEY", "resolved-openai-key")
     _, route = resolve_model_route(model_family=resolve_model_family())
     assert route is not None
-    model = route.create_model(
-        replace(route.model_parameters, max_output_tokens=CLASSIFIER_OUTPUT_TOKENS), None
-    )
+    model = route.create_model(route.model_parameters, None)
     model.disable_streaming = True
     delays: list[float] = []
 
@@ -664,7 +666,6 @@ async def test_non_azure_classifier_does_not_convert_content_filter_errors(
                 codec=Utf8ByteCodec(),
                 context_window_tokens=100_000,
                 instruction_tokens=512,
-                output_tokens=CLASSIFIER_OUTPUT_TOKENS,
                 sleep=no_delay,
             )
         assert error.value.attempt_count == 3

@@ -20,7 +20,7 @@ def test_has_skills_false_when_cwd_missing() -> None:
 
 
 def test_has_skills_false_for_agents_workdir_without_skill_md(tmp_path: Path) -> None:
-    """Operator emptyDir at cwd/.agents must not enable skills by itself."""
+    """An empty directory without SKILL.md must not enable skills by itself."""
     (tmp_path / ".agents").mkdir()
     assert has_skills(str(tmp_path)) is False
 

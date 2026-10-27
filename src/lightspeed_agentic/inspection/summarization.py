@@ -8,7 +8,11 @@ from typing import Any
 
 from langchain_core.messages import AnyMessage, ToolMessage, get_buffer_string
 
-from lightspeed_agentic.inspection.middleware import TOOL_DATA_TRUST_INSTRUCTION, _wrap_tool_output
+from lightspeed_agentic.inspection.middleware import (
+    TOOL_DATA_TRUST_INSTRUCTION,
+    _wrap_tool_output,
+    filter_untrusted_tool_results,
+)
 
 _SUMMARY_TOOL_DATA_INSTRUCTION = (
     f"{TOOL_DATA_TRUST_INSTRUCTION}\n"
@@ -21,8 +25,13 @@ def _format_summary_messages(messages: Sequence[AnyMessage]) -> str:
     """Serialize messages while keeping wrapper tags visible to the summary model."""
     wrapped: list[AnyMessage] = []
     replacements: dict[str, str] = {}
+    untrusted_results = {id(message) for message in filter_untrusted_tool_results(messages)}
     for message in messages:
-        if not isinstance(message, ToolMessage) or not message.name:
+        if (
+            not isinstance(message, ToolMessage)
+            or not message.name
+            or id(message) not in untrusted_results
+        ):
             wrapped.append(message)
             continue
 

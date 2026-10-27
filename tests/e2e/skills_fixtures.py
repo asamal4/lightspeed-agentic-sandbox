@@ -12,7 +12,6 @@ SKILLS_SOURCE = Path(__file__).resolve().parent / "workspace" / "skills"
 E2E_POD_OUTPUT_DIR = "/tmp/lightspeed-e2e-output"  # noqa: S108 — pod-local emptyDir mount path
 E2E_POD_SKILLS_DIR = "/app/skills"
 E2E_POD_SKILLS_SRC_DIR = "/mnt/e2e-skills-src"
-E2E_POD_SKILLS_WORKDIR = "/app/skills/.agents"
 E2E_TOKEN_REL_PATH = ".e2e_token"  # noqa: S105 — relative output filename, not a credential
 
 
@@ -69,11 +68,10 @@ def skill_materialize_script() -> str:
     and also contain a ``..data`` symlink plus a timestamped directory. Copying
     those entries makes DeepAgents list paths its backend then rejects.
     Copy only skill entries and dereference them so ``SKILL.md`` is a regular
-    file (OpenAI ``LocalDirLazySkillSource`` skips non-regular files).
+    file.
     """
     return (
         "set -euo pipefail\n"
-        f'mkdir -p "{E2E_POD_SKILLS_WORKDIR}"\n'
         f'for src in "{E2E_POD_SKILLS_SRC_DIR}"/*; do\n'
         '  name=$(basename "${src}")\n'
         f'  dest="{E2E_POD_SKILLS_DIR}/${{name}}"\n'

@@ -49,6 +49,67 @@ from .conftest import MockProvider
 _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
+@pytest.mark.parametrize("audit_enabled", [False, True])
+@pytest.mark.parametrize("capture_setting", [None, "false", "true"])
+def test_compliance_content_policy_does_not_mutate_source_spans(
+    audit_enabled: bool,
+    capture_setting: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    recorded_exporter = _RecordingTraceExporter()
+    monkeypatch.setattr(_tracing_mod, "GrpcSpanExporter", lambda **_kw: recorded_exporter)
+    monkeypatch.setattr(_tracing_mod, "_configure_log_exporter", lambda *_a, **_kw: None)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.example:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    monkeypatch.setenv("LIGHTSPEED_AUDIT_ENABLED", str(audit_enabled).lower())
+    if capture_setting is None:
+        monkeypatch.delenv("LIGHTSPEED_CAPTURE_CONTENT", raising=False)
+    else:
+        monkeypatch.setenv("LIGHTSPEED_CAPTURE_CONTENT", capture_setting)
+    init_tracer(agenticrun_uid="copy-policy", agenticrun_phase="analysis")
+    content_keys = {
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
+        "gen_ai.system_instructions",
+        "gen_ai.tool.definitions",
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool.call.result",
+    }
+    attributes = dict.fromkeys(content_keys, '{"content":"REJECTED-NATIVE-SECRET"}')
+    attributes["gen_ai.tool.name"] = "lookup"
+    attributes["gen_ai.tool.call.id"] = "real-call-id"
+    provider = _tracing_mod._state.tracer_provider
+    assert provider is not None
+    with provider.get_tracer("test").start_as_current_span(
+        "execute_tool lookup", attributes=attributes
+    ):
+        pass
+    provider.force_flush()
+
+    source = _span_records(recorded_exporter.requests)["execute_tool lookup"][-1]
+    source_attributes = {a.key: a.value.string_value for a in source.attributes}
+    assert source_attributes == attributes
+    output = capsys.readouterr().out
+    if not audit_enabled:
+        assert output == ""
+        return
+    request = ParseDict(json.loads(output), ExportTraceServiceRequest())
+    copied = _span_records([request])["execute_tool lookup"][-1]
+    copied_attributes = {a.key: a.value.string_value for a in copied.attributes}
+    if capture_setting == "false":
+        assert copied_attributes == {
+            "gen_ai.tool.name": "lookup",
+            "gen_ai.tool.call.id": "real-call-id",
+        }
+        assert "REJECTED-NATIVE-SECRET" not in output
+    else:
+        assert copied_attributes == attributes
+    assert copied.span_id == source.span_id
+    assert copied.trace_id == source.trace_id
+    assert copied.status == source.status
+
+
 @pytest.fixture(autouse=True)
 def _reset_tracer_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     """Shut down providers around each test so Batch exporters do not leak."""

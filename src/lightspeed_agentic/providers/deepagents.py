@@ -10,22 +10,27 @@ import inspect
 import json
 import logging
 import os
+import time
 import uuid
-from collections.abc import AsyncIterator, Mapping
-from dataclasses import replace
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 from uuid import UUID
 
 from opentelemetry import context as otel_context
+from opentelemetry import trace
 from opentelemetry.context import Context
-from opentelemetry.trace import Span, StatusCode
+from opentelemetry.trace import Span, SpanKind, StatusCode
 
+from lightspeed_agentic.audit import _set_tool_payload
+from lightspeed_agentic.metrics import tool_duration
 from lightspeed_agentic.skills import has_skills
-from lightspeed_agentic.tracing import set_json_span_attribute, start_generation_span
+from lightspeed_agentic.tracing import get_tracer, set_json_span_attribute, start_generation_span
 from lightspeed_agentic.types import (
     MAX_TOOL_RETURN_CHARS,
     AgentProvider,
     ContentBlockStopEvent,
+    MCPInitializationError,
+    MCPToolNameCollisionError,
     ProviderEvent,
     ProviderQueryOptions,
     ResultEvent,
@@ -303,13 +308,14 @@ def _create_generation_callback(
     *,
     main_name: str | None,
 ) -> Any:
-    """Create per-query tracing for the main DeepAgents model generations."""
+    """Capture main generations and native tool executions, independently of inspection."""
     from langchain_core.callbacks import AsyncCallbackHandler
 
     class GenerationCallback(AsyncCallbackHandler):
         def __init__(self) -> None:
             super().__init__()
             self._spans: dict[UUID, Span] = {}
+            self._tool_spans: dict[UUID, tuple[Span, float, str, str | None]] = {}
             self._parent_context = parent_context
             self._model = model_route.model
             self._provider = model_route.telemetry_provider
@@ -382,7 +388,97 @@ def _create_generation_callback(
                 finally:
                     span.end()
 
+        async def on_tool_start(
+            self,
+            serialized: dict[str, Any],
+            input_str: str,
+            *,
+            run_id: UUID,
+            inputs: dict[str, Any] | None = None,
+            tool_call_id: str | None = None,
+            **kwargs: Any,
+        ) -> None:
+            del kwargs
+            name = serialized.get("name") or "unknown"
+            attributes = {
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": name,
+                "gen_ai.tool.type": "function",
+                "gen_ai.provider.name": self._provider,
+            }
+            if tool_call_id:
+                attributes["gen_ai.tool.call.id"] = tool_call_id
+            parent = trace.get_current_span(self._parent_context)
+            parent_attributes = getattr(parent, "attributes", None) or {}
+            for key in ("agenticrun.uid", "agenticrun.phase"):
+                if value := parent_attributes.get(key):
+                    attributes[key] = value
+            span = get_tracer().start_span(
+                f"execute_tool {name}",
+                kind=SpanKind.INTERNAL,
+                context=self._parent_context,
+                attributes=attributes,
+            )
+            _set_tool_payload(
+                span,
+                "gen_ai.tool.call.arguments",
+                stringify(inputs) if inputs is not None else input_str,
+            )
+            self._tool_spans[run_id] = (span, time.monotonic(), name, tool_call_id)
+
+        async def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
+            from langchain_core.messages import ToolMessage
+            from langgraph.types import Command
+
+            del kwargs
+            if isinstance(output, Command):
+                entry = self._tool_spans.get(run_id)
+                if entry is None:
+                    return
+                call_id = entry[3]
+                messages = (
+                    output.update.get("messages", []) if isinstance(output.update, dict) else []
+                )
+                results = [
+                    message
+                    for message in messages
+                    if isinstance(message, ToolMessage) and message.tool_call_id == call_id
+                ]
+                output = results[0] if len(results) == 1 else None
+            self._finish_tool(
+                run_id,
+                output=getattr(output, "content", output),
+                error_type="tool_error" if getattr(output, "status", None) == "error" else None,
+            )
+
+        async def on_tool_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
+            del kwargs
+            self._finish_tool(run_id, error_type=type(error).__name__)
+
+        def _finish_tool(
+            self, run_id: UUID, *, output: Any = None, error_type: str | None = None
+        ) -> None:
+            entry = self._tool_spans.pop(run_id, None)
+            if entry is None:
+                return
+            span, start, name, _call_id = entry
+            try:
+                if error_type is None:
+                    if output is not None:
+                        _set_tool_payload(span, "gen_ai.tool.call.result", stringify(output))
+                else:
+                    span.set_attribute("error.type", error_type)
+                    span.set_status(StatusCode.ERROR)
+                tool_duration.labels(gen_ai_tool_name=name).observe(time.monotonic() - start)
+            finally:
+                span.end()
+
         def close_open(self, error_type: str) -> None:
+            while self._tool_spans:
+                _run_id, (span, _start, _name, _call_id) = self._tool_spans.popitem()
+                span.set_attribute("error.type", "missing_tool_result")
+                span.set_status(StatusCode.ERROR)
+                span.end()
             while self._spans:
                 _run_id, span = self._spans.popitem()
                 span.set_attribute("error.type", error_type)
@@ -518,6 +614,8 @@ def _process_ai_message(
 
 
 class DeepAgentsProvider(AgentProvider):
+    captures_native_tool_spans = True
+
     def __init__(self, model_route: ResolvedModelRoute) -> None:
         self._model_route = model_route
 
@@ -613,20 +711,13 @@ class DeepAgentsProvider(AgentProvider):
             if options.tool_output_inspection_enabled:
                 try:
                     from lightspeed_agentic.inspection.chunking import Utf8ByteCodec
-                    from lightspeed_agentic.inspection.client import (
-                        CLASSIFIER_OUTPUT_TOKENS,
-                        LangChainClassifierClient,
-                    )
+                    from lightspeed_agentic.inspection.client import LangChainClassifierClient
                     from lightspeed_agentic.inspection.inspector import (
                         inspect_tool_result as run_inspection,
                     )
 
                     classifier_model = self._model_route.create_model(
-                        replace(
-                            self._model_route.model_parameters,
-                            max_output_tokens=CLASSIFIER_OUTPUT_TOKENS,
-                        ),
-                        None,
+                        self._model_route.model_parameters, None
                     )
                     # Inherited graph callbacks otherwise auto-stream nested calls;
                     # nostream hides graph events, not SDK transport streaming.
@@ -657,7 +748,6 @@ class DeepAgentsProvider(AgentProvider):
                             tool_call_id=tool_call_id or None,
                             context_window_tokens=context_window_tokens,
                             instruction_tokens=512,
-                            output_tokens=CLASSIFIER_OUTPUT_TOKENS,
                             deadline=options.deadline,
                             provider=self._model_route.telemetry_provider,
                             model=self._model_route.model,
@@ -667,7 +757,24 @@ class DeepAgentsProvider(AgentProvider):
                 except Exception as exc:
                     raise ToolResultSafetyInspectionFailed() from exc
 
-            inspection_middleware = ToolResultInspectionMiddleware(inspector_callback)
+            def notify_accepted_results(messages: Sequence[Any]) -> None:
+                from langgraph.config import get_stream_writer
+
+                signatures = {
+                    ToolResultInspectionMiddleware._signature(
+                        message.name or "",
+                        "error" if message.status == "error" else "result",
+                        message.tool_call_id or "",
+                        message.content,
+                    )
+                    for message in messages
+                }
+                get_stream_writer()({"lightspeed.accepted_tool_results": signatures})
+
+            inspection_middleware = ToolResultInspectionMiddleware(
+                inspector_callback,
+                on_accepted=(notify_accepted_results if inspector_callback is not None else None),
+            )
             summarization_middleware = create_tool_data_summarization_middleware(
                 chat_model, backend
             )
@@ -689,24 +796,43 @@ class DeepAgentsProvider(AgentProvider):
 
                 from lightspeed_agentic.tls import create_async_http_client
 
-                client = MultiServerMCPClient(
-                    {
-                        server.name: {  # type: ignore[misc]
-                            "transport": "http",
-                            "url": server.url,
-                            "headers": {h.name: h.value for h in server.headers},
-                            "timeout": server.timeout,
-                            "httpx_client_factory": create_async_http_client,
+                try:
+                    client = MultiServerMCPClient(
+                        {
+                            server.name: {  # type: ignore[misc]
+                                "transport": "http",
+                                "url": server.url,
+                                "headers": {h.name: h.value for h in server.headers},
+                                "timeout": server.timeout,
+                                "httpx_client_factory": create_async_http_client,
+                            }
+                            for server in options.mcp_servers
                         }
-                        for server in options.mcp_servers
-                    }
-                )
+                    )
+                except Exception as exc:
+                    raise MCPInitializationError(
+                        server_names=tuple(server.name for server in options.mcp_servers),
+                        error_type=type(exc).__name__,
+                    ) from None
+                tool_owners: dict[str, str] = {}
                 for server in options.mcp_servers:
                     allowed_tool_names = set(server.allowed_tool_names)
-                    server_tools = await client.get_tools(server_name=server.name)
-                    mcp_tools.extend(
-                        tool for tool in server_tools if tool.name in allowed_tool_names
-                    )
+                    try:
+                        server_tools = await client.get_tools(server_name=server.name)
+                    except Exception as exc:
+                        raise MCPInitializationError(
+                            server_names=(server.name,), error_type=type(exc).__name__
+                        ) from None
+                    for tool in server_tools:
+                        if tool.name not in allowed_tool_names:
+                            continue
+                        if tool.name in tool_owners:
+                            raise MCPToolNameCollisionError(
+                                tool_name=tool.name,
+                                server_names=(tool_owners[tool.name], server.name),
+                            )
+                        tool_owners[tool.name] = server.name
+                        mcp_tools.append(tool)
 
             if mcp_tools:
                 agent_kwargs["tools"] = mcp_tools
@@ -736,29 +862,32 @@ class DeepAgentsProvider(AgentProvider):
                 pending_tool_call_chunk = None
                 return events
 
-            async for msg, _stream_metadata in cast(Any, agent).astream(
+            async for stream_kind, data in cast(Any, agent).astream(
                 input_state,
                 config=stream_config,
-                stream_mode="messages",
+                stream_mode=["messages", "custom"],
             ):
+                if stream_kind == "custom":
+                    if not isinstance(data, dict) or "lightspeed.accepted_tool_results" not in data:
+                        continue
+                    # One-shot boundary acknowledgement, never a reusable trust grant.
+                    accepted = data["lightspeed.accepted_tool_results"]
+                    released: list[ToolResultEvent] = []
+                    remaining = []
+                    for pending in pending_tool_results:
+                        if inspection_middleware._signature(*pending[:4]) in accepted:
+                            released.append(pending[4])
+                        else:
+                            remaining.append(pending)
+                    pending_tool_results = remaining
+                    for pending_event in released:
+                        yield pending_event
+                    continue
+
+                msg, _stream_metadata = data
                 if msg.type in ("ai", "AIMessageChunk"):
-                    if options.tool_output_inspection_enabled:
-                        for (
-                            tool_name,
-                            result_type,
-                            call_id,
-                            content,
-                            pending_event,
-                        ) in pending_tool_results:
-                            if not inspection_middleware.is_passed(
-                                tool_name,
-                                result_type,
-                                call_id,
-                                content,
-                            ):
-                                raise ToolResultSafetyInspectionFailed()
-                            yield pending_event
-                        pending_tool_results.clear()
+                    if pending_tool_results:
+                        raise ToolResultSafetyInspectionFailed()
 
                     include_tool_calls = msg.type != "AIMessageChunk"
                     if msg.type == "AIMessageChunk":
@@ -811,18 +940,13 @@ class DeepAgentsProvider(AgentProvider):
                         error_type=("tool_error" if result_type == "error" else None),
                     )
                     if not options.tool_output_inspection_enabled:
-                        if not inspection_middleware.is_passed(
-                            tool_name,
-                            result_type,
-                            call_id,
-                            msg.content,
-                        ):
-                            raise ToolResultSafetyInspectionFailed()
                         yield tool_result_event
                     else:
                         pending_tool_results.append(
                             (tool_name, result_type, call_id, msg.content, tool_result_event)
                         )
+            if pending_tool_results:
+                raise ToolResultSafetyInspectionFailed()
             for event in flush_pending_tool_calls():
                 yield event
         except BaseException as exc:

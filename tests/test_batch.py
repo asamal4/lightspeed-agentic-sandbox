@@ -543,6 +543,98 @@ class TestBatchMain:
             )
             exit_mock.assert_called_once_with(1)
 
+    @pytest.mark.parametrize(
+        ("name", "value", "message"),
+        [
+            (
+                "LIGHTSPEED_AGENT_TIMEOUT_SECONDS",
+                None,
+                "LIGHTSPEED_AGENT_TIMEOUT_SECONDS is required but not set",
+            ),
+            (
+                "LIGHTSPEED_AGENT_TIMEOUT_SECONDS",
+                "invalid",
+                "LIGHTSPEED_AGENT_TIMEOUT_SECONDS must be a positive integer, got 'invalid'",
+            ),
+            (
+                "LIGHTSPEED_AGENT_TIMEOUT_SECONDS",
+                "0",
+                "LIGHTSPEED_AGENT_TIMEOUT_SECONDS must be positive, got 0",
+            ),
+            (
+                "LIGHTSPEED_AGENT_TIMEOUT_SECONDS",
+                "-1",
+                "LIGHTSPEED_AGENT_TIMEOUT_SECONDS must be positive, got -1",
+            ),
+            (
+                "LIGHTSPEED_AGENT_MAX_TURNS",
+                None,
+                "LIGHTSPEED_AGENT_MAX_TURNS is required but not set",
+            ),
+            (
+                "LIGHTSPEED_AGENT_MAX_TURNS",
+                "invalid",
+                "LIGHTSPEED_AGENT_MAX_TURNS must be an integer, got 'invalid'",
+            ),
+            (
+                "LIGHTSPEED_AGENT_MAX_TURNS",
+                "0",
+                "LIGHTSPEED_AGENT_MAX_TURNS must be between 1 and 500, got 0",
+            ),
+            (
+                "LIGHTSPEED_AGENT_MAX_TURNS",
+                "-1",
+                "LIGHTSPEED_AGENT_MAX_TURNS must be between 1 and 500, got -1",
+            ),
+            (
+                "LIGHTSPEED_AGENT_MAX_TURNS",
+                "501",
+                "LIGHTSPEED_AGENT_MAX_TURNS must be between 1 and 500, got 501",
+            ),
+        ],
+    )
+    def test_invalid_execution_limits_terminate_before_startup(
+        self, name: str, value: str | None, message: str
+    ) -> None:
+        """Real limit parsing fails batch startup without invoking or publishing work."""
+        from lightspeed_agentic.batch import main
+
+        env = {
+            "LIGHTSPEED_PROVIDER": "anthropic",
+            "LIGHTSPEED_MODEL": "configured-model",
+            "ANTHROPIC_API_KEY": "test-key",
+            "LIGHTSPEED_AGENT_TIMEOUT_SECONDS": "300",
+            "LIGHTSPEED_AGENT_MAX_TURNS": "200",
+        }
+        if value is None:
+            env.pop(name)
+        else:
+            env[name] = value
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
+            patch("lightspeed_agentic.batch.configure_tls"),
+            patch("lightspeed_agentic.batch.run_readiness_checks") as readiness,
+            patch("lightspeed_agentic.batch.init_tracer") as init_tracer,
+            patch("lightspeed_agentic.batch.discover_and_admit_mcp_servers") as discover,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider") as provider,
+            patch("lightspeed_agentic.batch.run_agent_query") as query,
+            patch("lightspeed_agentic.batch.publish_agent_result") as publish,
+            patch("lightspeed_agentic.batch.write_termination_log") as write_log,
+            pytest.raises(SystemExit) as exit_info,
+        ):
+            main()
+
+        assert exit_info.value.code == 1
+        write_log.assert_called_once_with(message)
+        readiness.assert_not_called()
+        init_tracer.assert_not_called()
+        discover.assert_not_called()
+        provider.assert_not_called()
+        query.assert_not_called()
+        publish.assert_not_called()
+
     def test_reasoning_config_failure_before_tracer_writes_termination_log(self) -> None:
         with (
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),

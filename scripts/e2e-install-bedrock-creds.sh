@@ -70,5 +70,5 @@ echo "        name: ${SECRET_NAME}"
 echo
 echo "Provider env for Bedrock:"
 echo "  LIGHTSPEED_PROVIDER=bedrock"
-echo "  LIGHTSPEED_MODEL=global.anthropic.claude-haiku-4-5-20251001-v1:0"
+echo "  LIGHTSPEED_MODEL=global.anthropic.claude-haiku-5-5"
 echo "  AWS_REGION=us-east-1                 # Bedrock region"

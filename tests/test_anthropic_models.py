@@ -168,7 +168,7 @@ def test_bedrock_model_preserves_inference_profile_region_endpoint_and_tls(
     monkeypatch.setenv("AWS_SESSION_TOKEN", "stale-session-token")
     model = create_bedrock_model(
         ModelParameters(
-            model="global.anthropic.claude-haiku-4-5-20251001-v1:0",
+            model="global.anthropic.claude-haiku-5-5",
             provider=BedrockProviderParameters(region="us-west-2"),
             credentials=BedrockCredentialSource(
                 access_key_id="parameter-access-key",
@@ -180,7 +180,7 @@ def test_bedrock_model_preserves_inference_profile_region_endpoint_and_tls(
     )
 
     assert isinstance(model, ChatAnthropicBedrock)
-    assert model.model == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert model.model == "global.anthropic.claude-haiku-5-5"
     assert model.region_name == "us-west-2"
     assert model.thinking == (reasoning_config["thinking"] if reasoning_config else None)
     assert model._client.base_url == "https://bedrock.example.test"

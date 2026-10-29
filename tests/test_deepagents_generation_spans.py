@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 
-from .helpers import make_model_route
+from .helpers import TEST_WORKFLOW_MAX_TURNS, make_model_route
 
 _MODEL = "claude-sonnet-4-6"
 
@@ -256,7 +256,7 @@ async def test_run_agent_query_traces_main_generations_and_raw_shape_response(
         context=None,
         skills_dir=str(tmp_path),
         model="must-not-override-route",
-        max_turns=20,
+        max_turns=TEST_WORKFLOW_MAX_TURNS,
         timeout_seconds=30,
         tool_output_inspection_enabled=False,
         audit_enabled=False,

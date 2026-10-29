@@ -90,9 +90,8 @@ def test_route_preserves_model_precedence(
             resolve_model_route(explicit_model)
         return
 
-    sdk, route = resolve_model_route(explicit_model)
+    route = resolve_model_route(explicit_model)
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.model == expected_model
     assert route.model_parameters.model == expected_model
@@ -166,7 +165,6 @@ def test_model_family_resolution_retains_readiness_configuration(
     assert result.hosting == expected_hosting
     assert result.expected_envs == expected_envs
     assert result.credential_file_envs == file_envs
-    assert result.azure_auth_mode == ("api_key" if provider == "azure" else None)
 
 
 @pytest.mark.parametrize(
@@ -289,9 +287,8 @@ def test_compatible_openai_route_preserves_resolved_settings_without_env_mutatio
     )
     before = dict(os.environ)
 
-    sdk, route = resolve_model_route(override, model_family=family)
+    route = resolve_model_route(override, model_family=family)
 
-    assert sdk is None
     assert route is not None
     assert route.route == "openai-compatible"
     assert route.model == expected_model
@@ -336,9 +333,8 @@ def test_native_openai_routes_to_deepagents(base_url: str | None) -> None:
     if base_url is not None:
         os.environ["LIGHTSPEED_PROVIDER_URL"] = base_url
 
-    sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.route == "openai"
     assert route.model == "gpt-4.1-mini"
@@ -435,9 +431,8 @@ def test_anthropic_route_selects_constructor_and_typed_parameters(
         }
     )
 
-    sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.create_model is constructor
     parameters = route.model_parameters
@@ -484,9 +479,8 @@ def test_vertex_google_route_selects_gemini_constructor_and_typed_parameters(
         }
     )
 
-    sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.route == "vertex/google"
     assert route.model == "gemini-2.5-flash"
@@ -537,9 +531,8 @@ def test_route_uses_resolved_anthropic_hosting_and_settings_not_current_environm
         }
     )
 
-    sdk, route = resolve_model_route(model_family=model_family)
+    route = resolve_model_route(model_family=model_family)
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.create_model is anthropic.create_vertex_model
     assert route.model_parameters.model == "snapshot-model"
@@ -568,9 +561,8 @@ def test_direct_route_selects_endpoint_specific_shaping(base_url: str | None, me
     if base_url:
         os.environ["LIGHTSPEED_PROVIDER_URL"] = base_url
 
-    sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.create_model is anthropic.create_direct_model
     assert route.model_parameters.base_url == base_url
@@ -595,9 +587,8 @@ def test_cloud_anthropic_routes_preserve_region_defaults(
         os.environ["LIGHTSPEED_MODEL_PROVIDER"] = "anthropic"
     os.environ["LIGHTSPEED_MODEL"] = "configured-model"
 
-    sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     expected_provider = (
         VertexProviderParameters(project=project, region=region)
@@ -634,9 +625,8 @@ def test_vertex_route_uses_typed_settings_and_file_readiness(tmp_path: Path) -> 
     )
     env_before = dict(os.environ)
     family = resolve_model_family()
-    sdk, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     assert route.model_parameters.model == "configured-model"
     assert route.model_parameters.provider == VertexProviderParameters(
@@ -667,7 +657,7 @@ def test_model_parameters_carry_resolved_anthropic_credentials_without_repr_leak
         }
     )
 
-    _sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
     assert route is not None
     assert route.model_parameters.credentials == AnthropicCredentialSource(
@@ -701,7 +691,7 @@ def test_vertex_route_carries_provider_settings_and_unparsed_credential_file(
         }
     )
 
-    _sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
     assert route is not None
     assert route.model_parameters.provider == VertexProviderParameters(
@@ -727,7 +717,7 @@ def test_bedrock_route_carries_bedrock_provider_and_credential_settings() -> Non
         }
     )
 
-    _sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
     assert route is not None
     assert route.model_parameters.provider == BedrockProviderParameters(region="us-east-1")
@@ -740,9 +730,8 @@ def test_router_preserves_credential_readiness(provider: str) -> None:
 
     os.environ["LIGHTSPEED_PROVIDER"] = provider
     os.environ["LIGHTSPEED_MODEL"] = "configured-model"
-    sdk, route = resolve_model_route()
+    route = resolve_model_route()
 
-    assert sdk is None
     assert isinstance(route, ResolvedModelRoute)
     credential_envs = (
         ("ANTHROPIC_API_KEY",)
@@ -797,9 +786,8 @@ def test_azure_route_preserves_resolved_auth_version_and_readiness(
 
     family = resolve_model_family()
     environment = dict(os.environ)
-    sdk, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
 
-    assert sdk is None
     assert route is not None
     assert route.route == "azure"
     assert route.create_model is create_azure_model
@@ -863,9 +851,8 @@ def test_azure_route_uses_snapshot_despite_later_environment_changes(
     )
     environment = dict(os.environ)
 
-    sdk, route = resolve_model_route("override-deployment", model_family=family)
+    route = resolve_model_route("override-deployment", model_family=family)
 
-    assert sdk is None
     assert route.route == "azure"
     assert route.model == route.model_parameters.model == "override-deployment"
     assert route.model_parameters.base_url == "https://resolved.example.test/proxy"
@@ -892,9 +879,8 @@ def test_azure_router_leaves_invalid_configuration_to_readiness(tmp_path: Path, 
     (tmp_path / "apitoken").write_text("resolved-key")
     family = replace(resolve_model_family(), **{field: None})
 
-    sdk, route = resolve_model_route(model_family=family)
+    route = resolve_model_route(model_family=family)
 
-    assert sdk is None
     assert route.route == "azure"
     ready, checks = run_readiness_checks(family, route)
     assert ready is False
@@ -941,8 +927,8 @@ def test_router_does_not_import_optional_sdks_or_construct_models() -> None:
             "    resolve_model_route()\n"
             "os.environ['LIGHTSPEED_PROVIDER'] = 'openai'\n"
             "os.environ['LIGHTSPEED_PROVIDER_URL'] = 'https://vllm.example.test/v1'\n"
-            "sdk, route = resolve_model_route()\n"
-            "assert sdk is None and route.route == 'openai-compatible'\n"
+            "route = resolve_model_route()\n"
+            "assert route.route == 'openai-compatible'\n"
             "assert not any(name.split('.')[0] in "
             "{'anthropic', 'langchain_anthropic', 'langchain_core', 'langchain_aws', "
             "'langchain_google_vertexai', 'langchain_openai', "

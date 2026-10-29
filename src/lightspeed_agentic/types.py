@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     from lightspeed_agentic.mcp import AdmittedMCPProviderServer
 
 MAX_TOOL_RETURN_CHARS = 32_000
-TOOL_RETURN_PREVIEW_CHARS = 1_000
 
 
 def stringify(value: Any) -> str:
@@ -79,12 +78,9 @@ ProviderEvent = (
 class ProviderQueryOptions:
     prompt: str
     system_prompt: str
-    model: str
     max_turns: int
-    allowed_tools: list[str]
     cwd: str
     output_schema: dict[str, Any] | None = None
-    stream: bool = False
     mcp_servers: list[AdmittedMCPProviderServer] = field(default_factory=list)
     reasoning_config: dict[str, Any] | None = None
     tool_output_inspection_enabled: bool = True

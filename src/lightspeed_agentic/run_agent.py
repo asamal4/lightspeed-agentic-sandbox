@@ -18,7 +18,6 @@ from lightspeed_agentic.inspection.errors import ToolResultSafetyInspectionFaile
 from lightspeed_agentic.logging import EventLogger
 from lightspeed_agentic.mcp import AdmittedMCPProviderServer
 from lightspeed_agentic.metrics import operation_duration, token_usage
-from lightspeed_agentic.tools import DEFAULT_ALLOWED_TOOLS
 from lightspeed_agentic.tracing import (
     get_tracer,
     parse_traceparent,
@@ -182,8 +181,6 @@ async def run_agent_query(
     tracer = get_tracer()
     audit_logger = AuditLogger(
         phase=step,
-        model=model,
-        provider=provider.name,
         enabled=audit_enabled,
         capture_content=capture_content,
         agenticrun_uid=agenticrun_uid,
@@ -262,9 +259,7 @@ async def run_agent_query(
                     ProviderQueryOptions(
                         prompt=prompt,
                         system_prompt=system_prompt,
-                        model=model,
                         max_turns=max_turns,
-                        allowed_tools=DEFAULT_ALLOWED_TOOLS,
                         cwd=skills_dir,
                         output_schema=output_schema,
                         mcp_servers=mcp_servers or [],

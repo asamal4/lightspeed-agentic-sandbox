@@ -19,7 +19,6 @@ flit-core==3.12.0
     # via
     #   coherent-licensed
     #   docutils
-    #   google-adk
     #   id
     #   jeepney
     #   markdown-it-py
@@ -33,28 +32,22 @@ flit-core==4.1.0
     #   pyproject-metadata
     #   wheel
 hatch-fancy-pypi-readme==25.1.0
-    # via
-    #   anthropic
-    #   langsmith
+    # via anthropic
 hatch-vcs==0.5.0
     # via urllib3
 hatchling==1.26.3
     # via
     #   anthropic
     #   hatch-fancy-pypi-readme
-    #   langsmith
 hatchling==1.32.4
     # via
+    #   bracex
     #   hatch-fancy-pypi-readme
     #   hatch-vcs
-    #   langchain
     #   langchain-anthropic
     #   langchain-aws
-    #   langchain-core
     #   langchain-google-genai
     #   langchain-google-vertexai
-    #   langchain-openai
-    #   openai-agents
     #   pygments
     #   urllib3
     #   wcmatch
@@ -130,27 +123,20 @@ trove-classifiers==2026.9.21.13
     # via hatchling
 twine==7.0.0
     # via google-genai
-urllib3==2.8.0
-    # via
-    #   id
-    #   requests
-    #   twine
 vcs-versioning==2.6.0
     # via setuptools-scm
 versioneer==0.29
     # via bottleneck
 wheel==0.48.0
     # via
-    #   authlib
     #   deepagents
     #   google-genai
 
 # The following packages are considered to be unsafe in a requirements file:
 setuptools==84.0.0
     # via charset-normalizer
-setuptools==84.2.0
+setuptools==84.2.1
     # via
-    #   authlib
     #   bottleneck
     #   calver
     #   certifi
@@ -168,7 +154,6 @@ setuptools==84.2.0
     #   pathspec
     #   pluggy
     #   pycparser
-    #   pyjwt
     #   readme-renderer
     #   requests
     #   secretstorage

@@ -1,9 +1,8 @@
 """Resolve generic provider settings and credential references for startup.
 
-The operator sets LIGHTSPEED_* values on the sandbox pod. Migrated Anthropic,
-Vertex, and Bedrock routes keep these values in typed configuration rather than
-mutating process-global SDK settings. Legacy OpenAI/Azure adapters still depend
-on SDK-specific environment settings.
+The operator sets LIGHTSPEED_* values on the sandbox pod. All implemented routes
+keep these values in typed configuration rather than mutating process-global
+SDK settings during configuration resolution.
 """
 
 from __future__ import annotations
@@ -127,10 +126,6 @@ class ResolvedModelFamily:
     name: Literal["anthropic", "google", "openai"]
     expected_envs: tuple[str, ...]
     credential_file_envs: tuple[str, ...] = ()
-    azure_auth_mode: str | None = None
-    azure_credentials: dict[str, str] | None = dataclasses.field(default=None, repr=False)
-    azure_api_version: str | None = dataclasses.field(kw_only=True, default=None)
-    azure_api_key: str | None = dataclasses.field(kw_only=True, default=None, repr=False)
     hosting: Literal["anthropic", "vertex", "bedrock", "openai", "azure"] = dataclasses.field(
         kw_only=True
     )
@@ -139,17 +134,6 @@ class ResolvedModelFamily:
     provider: ProviderParameters | None = None
     credentials: CredentialSource | None = dataclasses.field(default=None, repr=False)
     api_key: str | None = dataclasses.field(default=None, repr=False)
-
-
-@dataclasses.dataclass(frozen=True)
-class ResolvedSDK:
-    """Legacy adapter and readiness configuration retained during migration."""
-
-    name: str  # "openai"
-    expected_envs: tuple[str, ...]  # credential env vars expected from envFrom
-    credential_file_envs: tuple[str, ...] = ()  # env vars whose value is a credentials file path
-    azure_auth_mode: str | None = None  # "entra_id" or "api_key"; None for non-Azure
-    azure_credentials: dict[str, str] | None = dataclasses.field(default=None, repr=False)
 
 
 def _resolved_value(value: str | None, env_name: str) -> str | None:
@@ -317,16 +301,9 @@ def _resolve_azure(
         return ResolvedModelFamily(
             "openai",
             (),  # no env-based credentials needed
-            azure_auth_mode="entra_id",
-            azure_api_version=resolved_api_version,
             hosting="azure",
             model=resolved_model,
             base_url=resolved_base_url,
-            azure_credentials={
-                "client_id": client_id,
-                "tenant_id": tenant_id,
-                "client_secret": client_secret,
-            },
             provider=provider,
             credentials=AzureEntraCredentialSource(
                 tenant_id=tenant_id,
@@ -342,9 +319,6 @@ def _resolve_azure(
         return ResolvedModelFamily(
             "openai",
             (),
-            azure_auth_mode="api_key",
-            azure_api_version=resolved_api_version,
-            azure_api_key=api_key_file,
             provider=provider,
             credentials=AzureApiKeyCredentialSource(api_key=api_key_file),
             hosting="azure",
@@ -358,9 +332,6 @@ def _resolve_azure(
         return ResolvedModelFamily(
             "openai",
             (),
-            azure_auth_mode="api_key",
-            azure_api_version=resolved_api_version,
-            azure_api_key=api_key_env,
             provider=provider,
             credentials=AzureApiKeyCredentialSource(api_key=api_key_env),
             hosting="azure",

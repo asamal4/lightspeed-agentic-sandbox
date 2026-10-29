@@ -15,8 +15,8 @@ import jsonschema
 import pytest
 
 from lightspeed_agentic.config import resolve_model_family
-from lightspeed_agentic.factory import create_provider
 from lightspeed_agentic.inspection.errors import ToolResultSafetyInspectionFailed
+from lightspeed_agentic.providers.deepagents import DeepAgentsProvider
 from lightspeed_agentic.providers.model_router import resolve_model_route
 from lightspeed_agentic.readiness import run_readiness_checks
 from lightspeed_agentic.types import (
@@ -32,6 +32,8 @@ from tests.test_openai_models import (
     _openai_response,
     _openai_response_stream,
 )
+
+from .helpers import TEST_WORKFLOW_MAX_TURNS
 
 
 def _route(monkeypatch: pytest.MonkeyPatch, root: Path, version: str, auth_mode: str) -> Any:
@@ -49,8 +51,7 @@ def _route(monkeypatch: pytest.MonkeyPatch, root: Path, version: str, auth_mode:
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_URL", "https://resolved-resource.example.test/proxy")
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_API_VERSION", version)
     family = resolve_model_family()
-    sdk, route = resolve_model_route(model_family=family)
-    assert sdk is None
+    route = resolve_model_route(model_family=family)
     assert route is not None
     assert route.route == "azure"
     assert run_readiness_checks(family, route)[0] is True
@@ -396,15 +397,13 @@ async def test_azure_route_runs_native_skill_shell_mcp_inspection_and_shaping(
         return reply(body, "answer", "azure-shell-sentinel and azure-mcp-sentinel")
 
     azure_http.model_handler = respond
-    provider = create_provider("deepagents", route)
+    provider = DeepAgentsProvider(route)
     events: list[Any] = []
     options = ProviderQueryOptions(
         prompt="Use the Azure workflow skill and report both sentinels.",
         system_prompt="Follow the skill, preserving both sentinels.",
-        model="must-not-override-route",
-        allowed_tools=["Read", "Bash"],
         cwd=str(tmp_path),
-        max_turns=20,
+        max_turns=TEST_WORKFLOW_MAX_TURNS,
         reasoning_config={"effort": "low"},
         output_schema=schema,
         tool_output_inspection_enabled=True,
@@ -641,7 +640,7 @@ async def test_non_azure_classifier_does_not_convert_content_filter_errors(
     monkeypatch.setenv("LIGHTSPEED_MODEL", "operator-model")
     monkeypatch.setenv("LIGHTSPEED_PROVIDER_URL", endpoint)
     monkeypatch.setenv("OPENAI_API_KEY", "resolved-openai-key")
-    _, route = resolve_model_route(model_family=resolve_model_family())
+    route = resolve_model_route(model_family=resolve_model_family())
     assert route is not None
     model = route.create_model(route.model_parameters, None)
     model.disable_streaming = True
@@ -730,14 +729,12 @@ async def test_older_azure_api_rejects_schema_before_model_or_tool_execution(
         )
 
     azure_http.model_handler = respond
-    provider = create_provider("deepagents", route)
+    provider = DeepAgentsProvider(route)
     options = ProviderQueryOptions(
         prompt="Write the sentinel and finish.",
         system_prompt="Follow the request.",
-        model=route.model,
-        allowed_tools=["Bash"],
         cwd=str(tmp_path),
-        max_turns=5,
+        max_turns=TEST_WORKFLOW_MAX_TURNS,
         output_schema={
             "type": "object",
             "properties": {"status": {"type": "string"}},
@@ -809,17 +806,15 @@ async def test_routed_azure_failures_close_initialized_clients(
 
         azure_http.model_handler = wait_for_cancellation
         expected = asyncio.CancelledError
-    provider = create_provider("deepagents", route)
+    provider = DeepAgentsProvider(route)
 
     async def consume() -> None:
         async for _ in provider.query(
             ProviderQueryOptions(
                 prompt="run",
                 system_prompt="test",
-                model="ignored",
-                allowed_tools=["Read", "Bash"],
                 cwd=str(tmp_path),
-                max_turns=5,
+                max_turns=TEST_WORKFLOW_MAX_TURNS,
                 tool_output_inspection_enabled=True,
             )
         ):

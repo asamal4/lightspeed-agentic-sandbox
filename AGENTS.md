@@ -120,7 +120,6 @@ src/lightspeed_agentic/
 ├── batch.py              # Batch entrypoint: read /input, run agent, publish Result CR
 ├── run_agent.py          # run_agent_query(), format_context_prefix()
 ├── config.py             # resolve_model_family(); SDK env/credential mapping; reasoning parse
-├── factory.py            # create_provider(name, model_route=None); DeepAgents requires a route
 ├── readiness.py          # R1 credential checks; run_readiness_checks() at batch startup
 ├── mcp.py                # parse_mcp_servers(); header resolution
 ├── audit.py              # AuditLogger GenAI spans/events
@@ -128,7 +127,6 @@ src/lightspeed_agentic/
 ├── tracing.py            # TracerProvider, traceparent helpers
 ├── logging.py            # EventLogger (debug thinking buffer)
 ├── skills.py             # has_skills() — SKILL.md presence under cwd
-├── tools.py              # DEFAULT_ALLOWED_TOOLS only
 ├── types.py              # Provider events, query options, AgentProvider ABC
 ├── publish_results/
 │   ├── publish.py        # Result CR via kubernetes CustomObjectsApi
@@ -151,9 +149,9 @@ src/lightspeed_agentic/
 | Streaming | `astream(stream_mode=["messages", "custom"])`; custom records carry one-shot inspection acceptance |
 
 Keep provider adapters thin. The SDK should own tool execution and skill
-discovery; `tools.py` holds the shared allowlist constant only. The SKILL.md
-presence gate lives in `skills.py` (`has_skills`) — do not duplicate it in
-adapters or put path helpers in `tools.py`.
+discovery; there is no sandbox-owned built-in-tool allowlist. MCP tool exposure
+is restricted by canonical admission. The SKILL.md presence gate lives in
+`skills.py` (`has_skills`) — do not duplicate it in adapters.
 DeepAgents exposes skills through its native `/skills/` virtual route. The SDK
 adds the virtual-to-host path mapping needed by shell commands; scripts run through
 native `execute`, with setup and dependent commands combined in one shell call.
@@ -231,9 +229,11 @@ they use wheels. Versions can differ from `uv.lock`.
 `make verify-hermetic-requirements` checks package coverage, stale allowlist
 entries, and orphan packages; RHOAI and PyPI version skew produces warnings.
 
-Requirements regeneration needs network access, Podman or Docker, access to
-`quay.io/syedriko/uv:prefer-index`, Python 3.12+ with `packaging` available to
-`python3`, and `pybuild-deps` on `PATH`. These are separate from the ordinary
+Requirements regeneration needs a Linux environment, network access, Podman or
+Docker, access to `quay.io/syedriko/uv:prefer-index`, Python 3.12+ with `packaging`
+available to `python3`, and `pybuild-deps` on `PATH`. Build-dependency markers
+follow the host OS; macOS generation omits Linux-only requirements such as
+`secretstorage` and `jeepney`. These are separate from the ordinary
 `make install` setup. For example, install the host tools with
 `uv tool install pybuild-deps` and install `packaging` in the Python environment
 used by `python3`.

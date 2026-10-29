@@ -16,18 +16,6 @@ ClassifierCategory = Literal[
     "unknown",
 ]
 
-CLASSIFIER_CATEGORIES = frozenset(
-    {
-        "none",
-        "instruction_override",
-        "role_change",
-        "prompt_extraction",
-        "data_exfiltration",
-        "tool_manipulation",
-        "unknown",
-    }
-)
-
 
 class ClassifierRequest(BaseModel):
     """The only data sent to a safety classifier for one result chunk."""

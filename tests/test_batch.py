@@ -87,7 +87,7 @@ class TestBatchMain:
             patch(
                 "lightspeed_agentic.batch.run_readiness_checks", return_value=(True, {})
             ) as ready,
-            patch("lightspeed_agentic.batch.create_provider", return_value=provider) as create,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider", return_value=provider) as create,
             patch(
                 "lightspeed_agentic.batch.run_agent_query",
                 new_callable=AsyncMock,
@@ -101,12 +101,11 @@ class TestBatchMain:
 
         resolve_family.assert_called_once_with()
         assert ready.call_args.args[0].name == family
-        assert len(create.call_args.args) == 2
-        assert ready.call_args.args[1] is create.call_args.args[1]
+        assert len(create.call_args.args) == 1
+        assert ready.call_args.args[1] is create.call_args.args[0]
         assert query.call_args.kwargs["model"] == "exact-configured-model"
         assert query.call_args.args[0] is provider
-        assert create.call_args.args[0] == "deepagents"
-        route = create.call_args.args[1]
+        route = create.call_args.args[0]
         assert route.model == "exact-configured-model"
         expected_route = (
             "anthropic"
@@ -192,7 +191,7 @@ class TestBatchMain:
         with (
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.configure_tls") as configure_tls,
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=["parsed-server"]),
@@ -226,7 +225,7 @@ class TestBatchMain:
                 "lightspeed_agentic.batch.run_readiness_checks",
                 return_value=(True, {"provider_env": "ok"}),
             ),
-            patch("lightspeed_agentic.batch.create_provider") as create_provider,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider") as provider_cls,
             patch("lightspeed_agentic.batch.run_agent_query", new_callable=AsyncMock) as run_query,
             patch("lightspeed_agentic.batch.publish_agent_result") as publish,
             patch("lightspeed_agentic.batch.otel_runtime_enabled", return_value=True),
@@ -234,7 +233,7 @@ class TestBatchMain:
             patch("lightspeed_agentic.batch.shutdown_tracer"),
             patch("lightspeed_agentic.batch.sys.exit") as exit_mock,
         ):
-            provider = create_provider.return_value
+            provider = provider_cls.return_value
             provider.name = "deepagents"
             run_query.return_value = agent_result
             order: list[str] = []
@@ -286,14 +285,14 @@ class TestBatchMain:
         with (
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.configure_tls"),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
             patch("lightspeed_agentic.batch.parse_max_turns", return_value=200),
             patch("lightspeed_agentic.batch.run_readiness_checks", return_value=(True, {})),
-            patch("lightspeed_agentic.batch.create_provider") as create_provider,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider") as provider_cls,
             patch(
                 "lightspeed_agentic.batch.run_agent_query",
                 new_callable=AsyncMock,
@@ -303,7 +302,7 @@ class TestBatchMain:
             patch("lightspeed_agentic.batch.write_termination_log") as write_log,
             patch("lightspeed_agentic.batch.sys.exit") as exit_mock,
         ):
-            create_provider.return_value.name = "deepagents"
+            provider_cls.return_value.name = "deepagents"
 
             from lightspeed_agentic.batch import main
 
@@ -319,7 +318,7 @@ class TestBatchMain:
             patch.dict("os.environ", {"LIGHTSPEED_AUDIT_ENABLED": "true"}, clear=False),
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
@@ -332,12 +331,12 @@ class TestBatchMain:
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
             patch("lightspeed_agentic.batch.parse_max_turns", return_value=200),
-            patch("lightspeed_agentic.batch.create_provider") as create_provider,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider") as provider_cls,
             patch("lightspeed_agentic.batch.run_agent_query", new_callable=AsyncMock) as run_query,
             patch("lightspeed_agentic.batch.publish_agent_result"),
             patch("lightspeed_agentic.batch.otel_runtime_enabled", return_value=False),
         ):
-            provider = create_provider.return_value
+            provider = provider_cls.return_value
             provider.name = "deepagents"
             run_query.return_value = AgentResult(
                 output={"success": True, "summary": "done", "options": [], "actionRequired": False},
@@ -358,7 +357,7 @@ class TestBatchMain:
             ),
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
@@ -371,12 +370,12 @@ class TestBatchMain:
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
             patch("lightspeed_agentic.batch.parse_max_turns", return_value=200),
-            patch("lightspeed_agentic.batch.create_provider") as create_provider,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider") as provider_cls,
             patch("lightspeed_agentic.batch.run_agent_query", new_callable=AsyncMock) as run_query,
             patch("lightspeed_agentic.batch.publish_agent_result"),
             patch("lightspeed_agentic.batch.otel_runtime_enabled", return_value=False),
         ):
-            provider = create_provider.return_value
+            provider = provider_cls.return_value
             provider.name = "deepagents"
             run_query.return_value = AgentResult(
                 output={"success": True, "summary": "done"},
@@ -396,7 +395,7 @@ class TestBatchMain:
             patch.dict("os.environ", {"TRACEPARENT": traceparent}, clear=False),
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
@@ -409,13 +408,13 @@ class TestBatchMain:
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
             patch("lightspeed_agentic.batch.parse_max_turns", return_value=200),
-            patch("lightspeed_agentic.batch.create_provider") as create_provider,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider") as provider_cls,
             patch("lightspeed_agentic.batch.run_agent_query", new_callable=AsyncMock) as run_query,
             patch("lightspeed_agentic.batch.publish_agent_result"),
             patch("lightspeed_agentic.batch.otel_runtime_enabled", return_value=False),
             patch("lightspeed_agentic.batch.sys.exit") as exit_mock,
         ):
-            provider = create_provider.return_value
+            provider = provider_cls.return_value
             provider.name = "deepagents"
             run_query.return_value = AgentResult(
                 output={
@@ -441,7 +440,7 @@ class TestBatchMain:
         with (
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
@@ -488,7 +487,7 @@ class TestBatchMain:
                 side_effect=AssertionError("discovery must not run"),
             ),
             patch(
-                "lightspeed_agentic.batch.create_provider",
+                "lightspeed_agentic.batch.DeepAgentsProvider",
                 side_effect=AssertionError("provider must not be constructed"),
             ),
             patch("lightspeed_agentic.batch.write_termination_log") as write_log,
@@ -528,7 +527,7 @@ class TestBatchMain:
                 side_effect=AssertionError("discovery must not run"),
             ),
             patch(
-                "lightspeed_agentic.batch.create_provider",
+                "lightspeed_agentic.batch.DeepAgentsProvider",
                 side_effect=AssertionError("provider must not be constructed"),
             ),
             patch("lightspeed_agentic.batch.write_termination_log") as write_log,
@@ -548,7 +547,7 @@ class TestBatchMain:
         with (
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch(
                 "lightspeed_agentic.batch.parse_reasoning_config",
                 side_effect=ValueError("LIGHTSPEED_REASONING_CONFIG contains invalid JSON"),
@@ -570,7 +569,7 @@ class TestBatchMain:
         with (
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
@@ -580,13 +579,13 @@ class TestBatchMain:
                 return_value=(True, {"provider_env": "ok"}),
             ),
             patch("lightspeed_agentic.batch.otel_runtime_enabled", return_value=False),
-            patch("lightspeed_agentic.batch.create_provider") as create_provider,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider") as provider_cls,
             patch("lightspeed_agentic.batch.run_agent_query", new_callable=AsyncMock) as run_query,
             patch("lightspeed_agentic.batch.publish_agent_result"),
             patch("lightspeed_agentic.batch.init_tracer") as init_tracer,
             patch("lightspeed_agentic.batch.shutdown_tracer") as shutdown_tracer,
         ):
-            provider = create_provider.return_value
+            provider = provider_cls.return_value
             provider.name = "deepagents"
             run_query.return_value = AgentResult(
                 output={
@@ -609,7 +608,7 @@ class TestBatchMain:
         with (
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch(
                 "lightspeed_agentic.batch.parse_mcp_servers",
@@ -636,7 +635,7 @@ class TestBatchMain:
             patch.dict(os.environ, {"LIGHTSPEED_MCP_SERVERS": servers_json}, clear=False),
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers") as parse_mcp,
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
@@ -662,7 +661,7 @@ class TestBatchMain:
         with (
             patch("lightspeed_agentic.batch.read_batch_inputs", return_value=_INPUTS),
             patch("lightspeed_agentic.batch.resolve_model_family", return_value=_MOCK_FAMILY),
-            patch("lightspeed_agentic.batch.resolve_model_route", return_value=(None, _MOCK_ROUTE)),
+            patch("lightspeed_agentic.batch.resolve_model_route", return_value=_MOCK_ROUTE),
             patch("lightspeed_agentic.batch.parse_reasoning_config", return_value=None),
             patch("lightspeed_agentic.batch.parse_mcp_servers", return_value=[]),
             patch("lightspeed_agentic.batch.parse_agent_timeout", return_value=300),
@@ -671,7 +670,7 @@ class TestBatchMain:
                 "lightspeed_agentic.batch.run_readiness_checks",
                 return_value=(True, {"provider_env": "ok"}),
             ),
-            patch("lightspeed_agentic.batch.create_provider") as create_provider,
+            patch("lightspeed_agentic.batch.DeepAgentsProvider") as provider_cls,
             patch(
                 "lightspeed_agentic.batch.run_agent_query",
                 new_callable=AsyncMock,
@@ -687,7 +686,7 @@ class TestBatchMain:
             patch("lightspeed_agentic.batch.shutdown_tracer"),
             patch("lightspeed_agentic.batch.sys.exit") as exit_mock,
         ):
-            create_provider.return_value.name = "deepagents"
+            provider_cls.return_value.name = "deepagents"
 
             from lightspeed_agentic.batch import main
 

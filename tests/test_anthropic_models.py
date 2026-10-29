@@ -17,6 +17,8 @@ import pytest
 
 from lightspeed_agentic import tls
 
+from .helpers import TEST_WORKFLOW_MAX_TURNS
+
 
 @pytest.fixture(autouse=True)
 def _credential_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -651,10 +653,8 @@ async def test_anthropic_classifier_uses_nonstreaming_transport_inside_agent_gra
             options = ProviderQueryOptions(
                 prompt="Run the shell command and finish.",
                 system_prompt="Follow the request.",
-                model=route.model,
                 cwd=str(tmp_path),
-                allowed_tools=["Bash"],
-                max_turns=5,
+                max_turns=TEST_WORKFLOW_MAX_TURNS,
                 tool_output_inspection_enabled=True,
             )
             events: list[Any] = []

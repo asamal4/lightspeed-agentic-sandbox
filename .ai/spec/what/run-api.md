@@ -30,13 +30,13 @@ The sandbox runs as a one-shot batch process (OLS-3066). There is **no HTTP serv
 
 ### Agent execution
 
-7. **Provider startup.** The batch entrypoint calls `resolve_model_family()` once and passes its result to `resolve_model_route(model_family=...)`. Family resolution rejects unsupported Vertex model families, including `openai`, with `ValueError` before routing, readiness, MCP discovery, or provider creation. Routing returns `(None, model_route)` for Anthropic, Vertex/Google, native/custom OpenAI, and Azure without constructing model clients. Reasoning and MCP configuration are parsed before OTLP export or readiness I/O, then `run_readiness_checks(model_family, model_route)` (see `health-probes.md`) validates the same family's credentials and required route parameters. After tracer initialization and MCP admission, batch calls `create_provider("deepagents", model_route)` and uses `model_route.model` for every migrated route, including Azure's two auth modes; the legacy SDK-name dispatch, model-resolution helpers, and credential handoff have been removed. [PLANNED: OLS-3743] It also validates required `LIGHTSPEED_AGENT_TIMEOUT_SECONDS` and `LIGHTSPEED_AGENT_MAX_TURNS` before invoking the provider. When readiness or required configuration checks fail, the sandbox MUST fail before invoking the LLM (sandbox failure path, rule 23). Provider selection cannot change mid-process.
+7. **Provider startup.** The batch entrypoint calls `resolve_model_family()` once and passes its result to `resolve_model_route(model_family=...)`. Family resolution rejects unsupported Vertex model families, including `openai`, with `ValueError` before routing, readiness, MCP discovery, or provider creation. Routing returns `model_route` directly for Anthropic, Vertex/Google, native/custom OpenAI, and Azure without constructing model clients. Reasoning and MCP configuration are parsed before OTLP export or readiness I/O, then `run_readiness_checks(model_family, model_route)` (see `health-probes.md`) validates the same family's credentials and required route parameters. After tracer initialization and MCP admission, batch constructs `DeepAgentsProvider(model_route)` directly and uses `model_route.model` for every migrated route, including Azure's two auth modes; the legacy SDK-name dispatch, model-resolution helpers, and credential handoff have been removed. [PLANNED: OLS-3743] It also validates required `LIGHTSPEED_AGENT_TIMEOUT_SECONDS` and `LIGHTSPEED_AGENT_MAX_TURNS` before invoking the provider. When readiness or required configuration checks fail, the sandbox MUST fail before invoking the LLM (sandbox failure path, rule 23). Provider selection cannot change mid-process.
 
 8. **Agent query.** The sandbox runs `run_agent_query()` with system prompt, query, output schema, context, skills directory, model, MCP servers, and reasoning config. Tool execution (kubectl, oc) is unchanged — delegated to provider SDKs.
 
 9. **[PLANNED: OLS-3743] Agent timeout.** `LIGHTSPEED_AGENT_TIMEOUT_SECONDS` is a required positive integer supplied by the operator. It limits the complete `run_agent_query()` invocation, including model calls, tools, MCP calls, and processing across turns; it is not an individual LLM request timeout. Missing, zero, negative, or malformed values are sandbox configuration failures (rule 23). On timeout, `run_agent_query()` returns `success=false` with an actionable summary and a structured timeout classification for Result publishing; the publisher MUST NOT infer timeout from summary text. `LIGHTSPEED_TIMEOUT_MS` and its sandbox-owned 300-second default are removed.
 
-10. **Allowed tools.** The default allowed-tools list is passed into provider options; callers cannot override via input files (see `provider-contract.md`).
+10. **Tool surface.** DeepAgents owns its native built-in tools; there is no enforced sandbox built-in-tool allowlist or input-file override. MCP tool exposure remains restricted by canonical admission (see `provider-contract.md`).
 
 ### Context prefix formatting
 
@@ -111,7 +111,7 @@ The agent returns structured JSON via `run_agent_query()` (formerly HTTP `RunRes
 
 ## Constraints
 
-- Model id, provider id, agent timeout, maximum turns, and tool allowlists are not in input files; they are fixed or env-driven per `configuration.md`.
+- Model id, provider id, agent timeout, and maximum turns are not in input files; they are fixed or env-driven per `configuration.md`. Built-in tools follow the SDK surface; MCP tools follow admission.
 - Provider streaming is internal only; no streaming to an HTTP client.
 
 ## Planned Changes

@@ -11,6 +11,8 @@ removed). Live BDD runs **batch Jobs** on an OpenShift cluster using the publish
 sandbox image (`SANDBOX_IMAGE`, default Konflux `:main` tag). Pytest on the host
 creates input ConfigMaps + Jobs per scenario; step definitions assert on Result CR
 status and, when needed, pod log enrichment (see [Response bodies](#response-bodies)).
+The harness does not create or poll AgenticRun CRs or derive operator workflow phases.
+`k8s_helpers.py` contains only the shared byte-decoding pod-log reader.
 
 ## Spike findings (OLS-3220)
 

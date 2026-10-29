@@ -837,8 +837,6 @@ class DeepAgentsProvider(AgentProvider):
             if mcp_tools:
                 agent_kwargs["tools"] = mcp_tools
 
-            # allowed_tools is not forwarded: deepagents' LocalShellBackend exposes a broader
-            # built-in tool set than DEFAULT_ALLOWED_TOOLS. Filtering is a follow-up.
             agent = create_deep_agent(**agent_kwargs)
 
             thread_id = f"ls-{uuid.uuid4().hex[:12]}"

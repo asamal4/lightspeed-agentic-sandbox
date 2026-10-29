@@ -24,7 +24,6 @@ from lightspeed_agentic.config import (
     parse_tool_output_inspection_enabled,
     resolve_model_family,
 )
-from lightspeed_agentic.factory import create_provider
 from lightspeed_agentic.inspection.errors import ToolResultSafetyInspectionFailed
 from lightspeed_agentic.mcp import (
     MCPConfigError,
@@ -34,6 +33,7 @@ from lightspeed_agentic.mcp import (
     render_mcp_policy_context,
     split_admitted_mcp_servers,
 )
+from lightspeed_agentic.providers.deepagents import DeepAgentsProvider
 from lightspeed_agentic.providers.model_router import resolve_model_route
 from lightspeed_agentic.publish_results.publish import (
     PublishError,
@@ -174,7 +174,7 @@ def main() -> None:
     try:
         configure_tls()
         model_family = resolve_model_family()
-        _sdk, model_route = resolve_model_route(model_family=model_family)
+        model_route = resolve_model_route(model_family=model_family)
         reasoning_config = parse_reasoning_config()
         mcp_servers = parse_mcp_servers()
         agent_timeout_seconds = parse_agent_timeout()
@@ -195,7 +195,7 @@ def main() -> None:
 
         admitted_mcp_servers = asyncio.run(discover_and_admit_mcp_servers(mcp_servers))
         provider_mcp_servers, mcp_policies = split_admitted_mcp_servers(admitted_mcp_servers)
-        provider = create_provider("deepagents", model_route)
+        provider = DeepAgentsProvider(model_route)
         model = model_route.model
         audit_enabled = os.environ.get("LIGHTSPEED_AUDIT_ENABLED", "").strip().lower() == "true"
         capture_content = _resolve_capture_content(audit_enabled)

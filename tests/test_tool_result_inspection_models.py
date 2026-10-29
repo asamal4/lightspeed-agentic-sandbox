@@ -4,7 +4,6 @@ import pytest
 from pydantic import ValidationError
 
 from lightspeed_agentic.inspection.models import (
-    CLASSIFIER_CATEGORIES,
     ClassifierDecision,
     ClassifierRequest,
 )
@@ -80,7 +79,7 @@ def test_classifier_decision_requires_strict_boolean(value: object) -> None:
 def test_malicious_categories_are_allowed(category: str) -> None:
     decision = ClassifierDecision.model_validate({"injectionDetected": True, "category": category})
 
-    assert decision.category in CLASSIFIER_CATEGORIES
+    assert decision.category == category
 
 
 def test_benign_decision_requires_none_category() -> None:

@@ -19,7 +19,7 @@ from lightspeed_agentic.types import (
 
 
 def _make_logger(**kwargs) -> AuditLogger:
-    defaults = {"phase": "analysis", "model": "m", "provider": "p", "enabled": True}
+    defaults = {"phase": "analysis", "enabled": True}
     defaults.update(kwargs)
     return AuditLogger(**defaults)
 

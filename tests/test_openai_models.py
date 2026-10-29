@@ -19,6 +19,8 @@ import pytest
 from lightspeed_agentic import tls
 from lightspeed_agentic.providers.model_router import ModelParameters
 
+from .helpers import TEST_WORKFLOW_MAX_TURNS
+
 
 @pytest.fixture
 def http_clients(
@@ -457,7 +459,7 @@ async def test_compatible_openai_shaping_preserves_schema_in_chat_completions_re
     from lightspeed_agentic.providers.model_router import resolve_model_route
 
     original = deepcopy(schema)
-    sdk, route = resolve_model_route(
+    route = resolve_model_route(
         model,
         model_family=ResolvedModelFamily(
             "openai",
@@ -468,7 +470,6 @@ async def test_compatible_openai_shaping_preserves_schema_in_chat_completions_re
             api_key="EMPTY",
         ),
     )
-    assert sdk is None
     assert route is not None
 
     result, input_tokens, output_tokens = await _shape_structured_output(
@@ -519,7 +520,7 @@ async def test_compatible_shaping_binds_schema_on_unmodified_sdk_model(
     )
     from lightspeed_agentic.providers.model_router import resolve_model_route
 
-    sdk, route = resolve_model_route(
+    route = resolve_model_route(
         model_family=ResolvedModelFamily(
             "openai",
             (),
@@ -529,7 +530,6 @@ async def test_compatible_shaping_binds_schema_on_unmodified_sdk_model(
             api_key="EMPTY",
         )
     )
-    assert sdk is None
     assert route is not None
     requests, sync_client, async_client = captured_openai_requests
     model = ChatOpenAI(
@@ -823,7 +823,7 @@ async def test_native_openai_deepagent_reads_file_and_shapes_structured_result(
     monkeypatch.setattr(tls, "create_async_http_client", create_async_http_client)
     monkeypatch.setenv("OPENAI_API_KEY", "ambient-key-must-not-win")
     monkeypatch.setenv("HOME", str(tmp_path))
-    sdk, route = resolve_model_route(
+    route = resolve_model_route(
         model_family=ResolvedModelFamily(
             name="openai",
             hosting="openai",
@@ -832,7 +832,6 @@ async def test_native_openai_deepagent_reads_file_and_shapes_structured_result(
             expected_envs=("OPENAI_API_KEY",),
         )
     )
-    assert sdk is None
     assert route is not None
     provider = DeepAgentsProvider(route)
 
@@ -841,10 +840,8 @@ async def test_native_openai_deepagent_reads_file_and_shapes_structured_result(
             ProviderQueryOptions(
                 prompt=f"Read {sentinel_file} and report its contents.",
                 system_prompt="Read the requested file and report its contents unchanged.",
-                model="gpt-4.1-mini",
                 cwd=str(tmp_path),
-                max_turns=10,
-                allowed_tools=["Read"],
+                max_turns=TEST_WORKFLOW_MAX_TURNS,
                 output_schema=schema,
                 tool_output_inspection_enabled=inspection_mode != "disabled",
             )
@@ -1137,8 +1134,8 @@ async def test_compatible_openai_deepagent_runs_skill_and_admitted_mcp_with_insp
     classifier_format: str,
 ) -> None:
     from lightspeed_agentic.config import resolve_model_family
-    from lightspeed_agentic.factory import create_provider
     from lightspeed_agentic.mcp import AdmittedMCPProviderServer, ResolvedMCPHeader
+    from lightspeed_agentic.providers.deepagents import DeepAgentsProvider
     from lightspeed_agentic.providers.model_router import resolve_model_route
     from lightspeed_agentic.readiness import run_readiness_checks
     from lightspeed_agentic.types import (
@@ -1425,15 +1422,14 @@ async def test_compatible_openai_deepagent_runs_skill_and_admitted_mcp_with_insp
     monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "EMPTY")
     family = resolve_model_family()
-    sdk, route = resolve_model_route(model_family=family)
-    assert sdk is None
+    route = resolve_model_route(model_family=family)
     assert route is not None
     assert run_readiness_checks(family, route) == (
         True,
         {"provider_env": "ok", "model_route": "ok"},
     )
     monkeypatch.setenv("OPENAI_API_KEY", "ambient-key-must-not-win")
-    provider = create_provider("deepagents", model_route=route)
+    provider = DeepAgentsProvider(route)
     try:
         events = [
             event
@@ -1444,10 +1440,8 @@ async def test_compatible_openai_deepagent_runs_skill_and_admitted_mcp_with_insp
                         "then read the MCP sentinel."
                     ),
                     system_prompt="Follow the skill and report both sentinels unchanged.",
-                    model="options-model-must-not-win",
                     cwd=str(tmp_path),
-                    max_turns=10,
-                    allowed_tools=["Read", "Bash"],
+                    max_turns=TEST_WORKFLOW_MAX_TURNS,
                     reasoning_config={"effort": "low", "verbosity": "low"},
                     output_schema=schema if structured_output else None,
                     tool_output_inspection_enabled=True,
@@ -1585,8 +1579,8 @@ async def test_compatible_openai_failures_return_failed_result_and_close_clients
     from opentelemetry.trace import StatusCode
 
     from lightspeed_agentic.config import ResolvedModelFamily
-    from lightspeed_agentic.factory import create_provider
     from lightspeed_agentic.mcp import AdmittedMCPProviderServer, ResolvedMCPHeader
+    from lightspeed_agentic.providers.deepagents import DeepAgentsProvider
     from lightspeed_agentic.providers.model_router import resolve_model_route
     from lightspeed_agentic.run_agent import run_agent_query
 
@@ -1665,7 +1659,7 @@ async def test_compatible_openai_failures_return_failed_result_and_close_clients
             raise RuntimeError("Graph construction failed")
 
         monkeypatch.setattr("deepagents.create_deep_agent", fail_graph)
-    sdk, route = resolve_model_route(
+    route = resolve_model_route(
         model_family=ResolvedModelFamily(
             "openai",
             (),
@@ -1675,9 +1669,8 @@ async def test_compatible_openai_failures_return_failed_result_and_close_clients
             api_key="EMPTY",
         )
     )
-    assert sdk is None
     assert route is not None
-    provider = create_provider("deepagents", model_route=route)
+    provider = DeepAgentsProvider(route)
     try:
         result = await run_agent_query(
             provider,
@@ -1687,7 +1680,7 @@ async def test_compatible_openai_failures_return_failed_result_and_close_clients
             context=None,
             skills_dir=str(tmp_path),
             model=route.model,
-            max_turns=10,
+            max_turns=TEST_WORKFLOW_MAX_TURNS,
             timeout_seconds=30,
             tool_output_inspection_enabled=setup_failure,
             mcp_servers=[
@@ -1770,8 +1763,7 @@ async def test_compatible_openai_model_uses_explicit_chat_completions_settings(
     monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     family = resolve_model_family()
     monkeypatch.setenv("OPENAI_API_KEY", "ambient-key-must-not-win")
-    sdk, route = resolve_model_route(model_family=family)
-    assert sdk is None
+    route = resolve_model_route(model_family=family)
     assert route is not None
     model = route.create_model(route.model_parameters, reasoning_config)
     assert model.use_responses_api is False

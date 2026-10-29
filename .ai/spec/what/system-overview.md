@@ -4,7 +4,7 @@ The lightspeed-agentic-sandbox is a multi-provider agent runtime that runs insid
 
 ## Single-Harness Migration [PARTIALLY IMPLEMENTED: OLS-4434]
 
-Anthropic and Vertex/Google routes use the shared DeepAgents adapter. Vertex Gemini is provided through the `ChatGoogleGenerativeAI` model integration; DeepAgents owns tools/skills, admitted MCP integration, safety, and the common event path. Native OpenAI also uses DeepAgents with `ChatOpenAI` on the Responses API; custom/vLLM endpoints use `ChatOpenAI` on Chat Completions. Their endpoint boundary is defined in [configuration rule 3a](configuration.md). Azure uses the shared DeepAgents harness with native Azure clients and both API-key/Entra auth. Vertex/OpenAI is unsupported and rejected during family resolution. Azure's routing/workflows are offline-tested; live authentication acceptance remains outstanding. This split is implementation status, not a claim of completed live parity or telemetry compatibility review. Operator inputs, credential contracts, batch lifecycle, and Result publishing remain unchanged. The Google ADK provider adapter is removed; cleanup of its declared dependency is deferred. The broader target and remaining migration gates are described in [provider-contract.md](provider-contract.md#deepagents-consolidation-partially-implemented-ols-4434) and [decision 0003](../decisions/0003-single-deepagents-harness.md).
+Anthropic and Vertex/Google routes use the shared DeepAgents adapter. Vertex Gemini is provided through the `ChatGoogleGenerativeAI` model integration; DeepAgents owns tools/skills, admitted MCP integration, safety, and the common event path. Native OpenAI also uses DeepAgents with `ChatOpenAI` on the Responses API; custom/vLLM endpoints use `ChatOpenAI` on Chat Completions. Their endpoint boundary is defined in [configuration rule 3a](configuration.md). Azure uses the shared DeepAgents harness with native Azure clients and both API-key/Entra auth. Vertex/OpenAI is unsupported and rejected during family resolution. Azure's routing/workflows are offline-tested; live authentication acceptance remains outstanding. This split is implementation status, not a claim of completed live parity or telemetry compatibility review. Operator inputs, credential contracts, batch lifecycle, and Result publishing remain unchanged. The Google ADK provider adapter and retired harness dependencies are removed from local and Konflux inputs. The broader target and remaining migration gates are described in [provider-contract.md](provider-contract.md#deepagents-consolidation-partially-implemented-ols-4434) and [decision 0003](../decisions/0003-single-deepagents-harness.md).
 
 ## Behavioral Rules
 
@@ -18,7 +18,7 @@ Anthropic and Vertex/Google routes use the shared DeepAgents adapter. Vertex Gem
 
 ### Component Inventory
 
-4. Major components: batch entrypoint (`batch.py`), agent execution (`run_agent.py`), provider abstraction (factory, events, options), the shared DeepAgents adapter, model routing and construction (`providers/model_router.py`, `providers/models/anthropic.py`, `providers/models/gemini.py`, `providers/models/openai.py`), configuration (`config.py`), MCP (`mcp.py`), Result CR publishing (`publish_results/`), readiness checks (`readiness.py`), and observability (`audit.py`, `metrics.py`, `tracing.py`).
+4. Major components: batch entrypoint (`batch.py`), agent execution (`run_agent.py`), provider abstraction (interface, events, options), the shared DeepAgents adapter, model routing and construction (`providers/model_router.py`, `providers/models/anthropic.py`, `providers/models/gemini.py`, `providers/models/openai.py`), configuration (`config.py`), MCP (`mcp.py`), Result CR publishing (`publish_results/`), readiness checks (`readiness.py`), and observability (`audit.py`, `metrics.py`, `tracing.py`).
 
 5. Component behavioral rules: `run-api.md`, `provider-contract.md`, `configuration.md`, `health-probes.md`, `audit-logging.md`, `e2e-testing.md`.
 
@@ -53,13 +53,13 @@ See `configuration.md` for the full environment variable reference.
 ## Constraints
 
 - Not a general-purpose API server. One operator, one batch run per pod.
-- Provider SDK packages are optional extras; the container image ships all three.
+- Provider SDK packages are optional extras; the container image installs `all`.
 - Hermetic Konflux builds (no network during image build).
 
 ## Planned Changes
 
 | Ticket | Summary |
 |---|---|
-| OLS-4434 | Verify migrated DeepAgents routes (including Azure API key/Entra) and preserve external contracts and shared tools/safety; dependency cleanup remains deferred |
+| OLS-4434 | Verify migrated DeepAgents routes (including Azure API key/Entra) and preserve external contracts and shared tools/safety; local and Konflux dependency cleanup is complete; live acceptance remains separate |
 | OLS-3033 | Align operator-passed `allowedTools` and `llm` with provider options |
 | OLS-3491 | System instructions via `/input/system-prompt` only |

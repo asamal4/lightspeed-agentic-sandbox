@@ -296,7 +296,6 @@ def test_azure_resolves_legacy_settings_without_mutating_sdk_environment(
     assert model_family.name == "openai"
     assert model_family.model == "gpt-4.1"
     assert model_family.base_url == "https://my-resource.openai.azure.com"
-    assert model_family.azure_api_version == "2024-08-01-preview"
     assert model_family.provider == config.AzureProviderParameters(api_version="2024-08-01-preview")
     assert "OPENAI_MODEL" not in os.environ
     assert "AZURE_OPENAI_ENDPOINT" not in os.environ
@@ -723,11 +722,11 @@ def test_azure_entra_id_mode(
 
     assert model_family.name == "openai"
     assert model_family.expected_envs == ()
-    assert model_family.azure_credentials == {
-        "client_id": "cid",
-        "tenant_id": "tid",
-        "client_secret": "csec",
-    }
+    assert model_family.credentials == config.AzureEntraCredentialSource(
+        client_id="cid",
+        tenant_id="tid",
+        client_secret="csec",  # noqa: S106
+    )
     # MUST NOT set API key in Entra mode
     assert "AZURE_OPENAI_API_KEY" not in os.environ
 
@@ -744,9 +743,8 @@ def test_azure_api_key_mode_from_file(
     model_family = resolve_model_family()
 
     assert model_family.name == "openai"
-    assert model_family.azure_credentials is None
-    assert model_family.azure_api_version == "2025-03-01-preview"
-    assert model_family.azure_api_key == "my-azure-key"
+    assert model_family.provider == config.AzureProviderParameters(api_version="2025-03-01-preview")
+    assert model_family.credentials == config.AzureApiKeyCredentialSource(api_key="my-azure-key")
     assert "my-azure-key" not in repr(model_family)
     assert "AZURE_OPENAI_API_KEY" not in os.environ
     assert "AZURE_OPENAI_API_VERSION" not in os.environ
@@ -765,7 +763,6 @@ def test_azure_defaults_to_structured_output_api_version(
     model_family = resolve_model_family()
 
     assert model_family.name == "openai"
-    assert model_family.azure_api_version == "2024-08-01-preview"
     assert model_family.provider == config.AzureProviderParameters(api_version="2024-08-01-preview")
     assert "AZURE_OPENAI_API_VERSION" not in os.environ
 
@@ -782,8 +779,7 @@ def test_azure_api_key_mode_from_env(
     model_family = resolve_model_family()
 
     assert model_family.name == "openai"
-    assert model_family.azure_credentials is None
-    assert model_family.azure_api_key == "env-key"
+    assert model_family.credentials == config.AzureApiKeyCredentialSource(api_key="env-key")
     assert "env-key" not in repr(model_family)
     assert os.environ["AZURE_OPENAI_API_KEY"] == "env-key"
 
@@ -812,13 +808,6 @@ def test_azure_entra_id_takes_precedence_over_api_key(
         tenant_id="tid",
         client_secret="csec",  # noqa: S106
     )
-    assert model_family.azure_credentials == {
-        "client_id": "cid",
-        "tenant_id": "tid",
-        "client_secret": "csec",
-    }
-    assert model_family.azure_api_key is None
-    assert model_family.azure_auth_mode == "entra_id"
     assert model_family.expected_envs == ()
     assert dict(os.environ) == env_before
 
@@ -837,8 +826,7 @@ def test_azure_incomplete_sp_files_falls_back_to_api_key(
 
     model_family = resolve_model_family()
 
-    assert model_family.azure_credentials is None
-    assert model_family.azure_api_key == "fallback-key"
+    assert model_family.credentials == config.AzureApiKeyCredentialSource(api_key="fallback-key")
     assert "AZURE_OPENAI_API_KEY" not in os.environ
 
 
@@ -856,8 +844,7 @@ def test_azure_empty_sp_file_not_entra(
 
     model_family = resolve_model_family()
 
-    assert model_family.azure_credentials is None
-    assert model_family.azure_api_key == "key"
+    assert model_family.credentials == config.AzureApiKeyCredentialSource(api_key="key")
     assert "AZURE_OPENAI_API_KEY" not in os.environ
 
 
@@ -931,9 +918,6 @@ def test_azure_typed_api_key_precedence(
     assert family.credentials is not None
     assert family.credentials == config.AzureApiKeyCredentialSource(api_key=expected_key)
     assert expected_key not in repr(family.credentials)
-    assert family.azure_api_key == expected_key
-    assert family.azure_credentials is None
-    assert family.azure_auth_mode == "api_key"
     assert dict(os.environ) == env_before
 
 
@@ -985,14 +969,11 @@ def test_azure_incomplete_credentials_keep_fallback_contract(
         family = resolve_model_family()
         assert family.credentials is not None
         assert family.credentials == config.AzureApiKeyCredentialSource(api_key="fallback-key")
-        assert family.azure_credentials is None
-        assert family.azure_auth_mode == "api_key"
     assert dict(os.environ) == env_before
 
 
-@pytest.mark.parametrize("legacy_sdk", [False, True], ids=["family", "legacy-handoff"])
 def test_azure_service_principal_values_are_hidden_from_configuration_repr(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, legacy_sdk: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _setup_azure_env(monkeypatch)
     _write_sp_files(
@@ -1003,19 +984,9 @@ def test_azure_service_principal_values_are_hidden_from_configuration_repr(
     )
     monkeypatch.setenv("LIGHTSPEED_LLM_CREDENTIALS_PATH", str(tmp_path))
     family = resolve_model_family()
-    value = (
-        config.ResolvedSDK(
-            name="openai",
-            expected_envs=(),
-            azure_auth_mode=family.azure_auth_mode,
-            azure_credentials=family.azure_credentials,
-        )
-        if legacy_sdk
-        else family
-    )
 
     for secret in ("private-client-value", "private-tenant-value", "private-secret-value"):
-        assert secret not in repr(value)
+        assert secret not in repr(family)
         assert secret not in repr(family.credentials)
 
 

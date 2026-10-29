@@ -6,6 +6,9 @@ from lightspeed_agentic.providers.model_router import (
     ResolvedModelRoute,
 )
 
+# Workflow budgets include SDK middleware graph steps, not just model calls.
+TEST_WORKFLOW_MAX_TURNS = 20
+
 
 def make_model_route(
     create_model: ModelCreator, *, model: str = "claude-sonnet-4-6"

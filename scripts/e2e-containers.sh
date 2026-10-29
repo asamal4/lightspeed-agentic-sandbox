@@ -229,14 +229,16 @@ _configure_batch_job_env() {
             export LIGHTSPEED_REASONING_CONFIG='{"thinking_budget":1024}'
             ;;
         anthropic-vertex-deepagents)
-            export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"enabled","budget_tokens":1024}}'
+            # Haiku 5.5 uses adaptive thinking; budget_tokens is not valid for it.
+            export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"adaptive"}}'
             ;;
         anthropic-bedrock-deepagents)
-            # Haiku 5.5 inference profiles reject thinking.type=enabled; adaptive is required.
+            # Haiku 5.5 uses adaptive thinking; budget_tokens is not valid for it.
             export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"adaptive"}}'
             ;;
         anthropic-deepagents)
-            export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"enabled","budget_tokens":1024}}'
+            # Haiku 5.5 uses adaptive thinking; budget_tokens is not valid for it.
+            export LIGHTSPEED_REASONING_CONFIG='{"thinking":{"type":"adaptive"}}'
             ;;
         azure-openai-agents)
             export LIGHTSPEED_REASONING_CONFIG='{"effort":"low"}'

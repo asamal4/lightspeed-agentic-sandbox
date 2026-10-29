@@ -56,4 +56,4 @@ echo "        name: ${SECRET_NAME}"
 echo
 echo "Provider env for direct Anthropic:"
 echo "  LIGHTSPEED_PROVIDER=anthropic"
-echo "  LIGHTSPEED_MODEL=claude-haiku-4-5   # or your model"
+echo "  LIGHTSPEED_MODEL=claude-haiku-5-5   # or your model"
